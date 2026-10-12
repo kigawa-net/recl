@@ -26,5 +26,9 @@ Internal canonical domain-separated request digest changes to `recl.mutation.v3`
 - The in-memory snapshot/scan plus separate per-key reads does not provide one globally atomic read over authorization and response. Authorization may change after last re-read; production requires bounded response semantics and verified revocation control.
 - No policy approval or explicit opt-in exists for Confidential automatic injection; therefore it stays blocked.
 - RESTRICTED must also be filtered/redacted by Kivra before requests reach recl. A server-side restriction is defense in depth, not a reason to send secrets to the server.
-- No additional source provenance, prompt-injection quarantine or tokenizer-level access control has been implemented.
+- Basic typed, unverified Source Provenance is implemented by recl #30, but no independent SourceVerifier, prompt-injection quarantine or tokenizer-level access control has been implemented.
 - Pinned production remains gated on Fortis [#45](https://github.com/kigawa-net/fortis/issues/45) Scan, recl [#14](https://github.com/kigawa-net/recl/issues/14) capability verification and [#26](https://github.com/kigawa-net/recl/issues/26) RBAC/tokenizer/transport.
+
+
+## Subsequent canonical request format
+The validity/sensitivity fields were introduced under `recl.mutation.v3`. Source metadata extended the internal canonical digest in `recl.mutation.v4` (recl #30). Old v1/v2/v3 receipts remain non-interchangeable with v4, and durable migration is not implemented.

@@ -13,6 +13,8 @@ data class ContextSnapshot(
     val sensitivity: Sensitivity = Sensitivity.INTERNAL,
     val validFromEpochMillis: Long? = null,
     val validUntilEpochMillis: Long? = null,
+    /** Citation claims retain their trust and verification state; never imply implicit verification. */
+    val sources: List<ContextSource> = emptyList(),
 )
 
 sealed interface ContextReadResult {
@@ -50,6 +52,7 @@ class ContextReader(private val storage: ContextStorage) {
             sensitivity = stored.sensitivity,
             validFromEpochMillis = stored.validFromEpochMillis,
             validUntilEpochMillis = stored.validUntilEpochMillis,
+            sources = stored.sources.toList(),
         ))
     }
 }

@@ -19,7 +19,7 @@ authenticated client
 ## Existing implementation contract
 
 - `ContextAggregate.pinned` defaults to `false`. Create can request an initial pin; update/unpin through `ContextPatch.pinned` is a semantic CAS change and increments `contentRevision`. Index ACK does not change the logical revision.
-- The internal mutation canonical digest now uses **`recl.mutation.v3`** to include pinned fields and the new sensitivity/valid-time create/patch fields (version bump is intentional). v1/v2 receipts were never a durable public protocol; any migration to persistent receipt storage must explicitly retain/translate old receipts. This is independent of the proposed external `recl.memory.v1` REST contract.
+- The current internal canonical digest uses **`recl.mutation.v4`**. v2 introduced pinned fields, v3 validity/sensitivity, and v4 adds Source Provenance fields; v1/v2/v3 receipts were never a durable public protocol. Any future Fortis persistence must explicitly retain or migrate old request identities. This is independent of the proposed external `recl.memory.v1` REST contract.
 - A new `ContextStorage.enumerateTenant(tenantId,maxItems)` primitive defaults to `Unsupported`; it must return `Complete`, `Unavailable`, or `TooLarge`, not an incomplete prefix as a successful result. The test-only InMemory adapter returns a deterministic, atomically captured snapshot for up to `maxItems` entries.
 - The caller's scope list is a **relevance filter**. Owner and tenant authorization come from the authenticated principal. The `global` scope applies only inside the authenticated tenant, never across tenants. Scopes are currently **exact-match**; hierarchy/prefix semantics are deferred.
 - Only confirmed, pinned, not-tombstoned, owner-authorized contexts are selected. An explicit Direct Get can still retrieve inactive historical records, but automatic pinned injection cannot.
@@ -36,7 +36,7 @@ Future Fortis implementation must define a snapshot/cursor/pagination contract o
 Scope and security blockers:
 
 - Production `SessionAuthenticator` (OIDC/service principal verification, tenant grants) is not implemented.
-- ContextAggregate does not yet track validFrom/validUntil, sensitivity, priority, provenance, or full RBAC. **Automatic Pinned retrieval must not be enabled for production before these policies are added and verified**.
+- ContextAggregate now tracks validFrom/validUntil, sensitivity and bounded unverified Source Provenance, but not trusted source attestation, priority or full RBAC. **Automatic Pinned retrieval must not be enabled for production before these policies are added and verified**.
 - No public MCP/REST pinned endpoint has been implemented.
 - Fortis does not yet supply a verified authoritative scan capability to recl; [Fortis #44](https://github.com/kigawa-net/fortis/issues/44) conditional KV batch alone does not guarantee `scanAtRevision`.
 - Pin selection from a live multi-node Fortis snapshot is **unsupported** until [recl #14](https://github.com/kigawa-net/recl/issues/14) verifies real scan, CAS, read and crash-recovery behavior.
@@ -51,3 +51,7 @@ The complete production acceptance criteria in recl #26 remain **open**.
 
 ## Policy update (recl #28)
 The internal Pinned Core now uses a trusted `Clock` to exclude future/expired contexts, and excludes `CONFIDENTIAL` or `RESTRICTED` from automatic injection. The direct authorized Context GET remains available for CONFIDENTIAL history. `validFrom` is inclusive and `validUntil` exclusive. Details: [validity and sensitivity](validity-sensitivity.md).
+
+
+## Source attestation gate (recl #30 / #32)
+Client-supplied source trust labels are not verification. The internal Pinned reader excludes a Context containing **any UNVERIFIED/STALE/INVALID source** until an independent server-side SourceVerifier attests all references. Kivra clients cannot set VerificationState. This conservative rule may omit useful Context but prevents unverified references from being presented as confirmed prompt evidence. See [source-provenance.md](source-provenance.md).

@@ -22,6 +22,7 @@ data class CreateContextMutation(
     val sensitivity: Sensitivity = Sensitivity.INTERNAL,
     val validFromEpochMillis: Long? = null,
     val validUntilEpochMillis: Long? = null,
+    val sources: List<SourceSubmission> = emptyList(),
 )
 
 data class UpdateContextMutation(
@@ -50,7 +51,14 @@ class TrustedMutationGateway(
             !validInterval(request.validFromEpochMillis, request.validUntilEpochMillis)
         ) return MutationResult.InvalidRequest
 
+        val normalizedSources = try { SourceReferencePolicy.normalizeMany(request.sources) }
+            catch (_: IllegalArgumentException) { return MutationResult.InvalidRequest }
+        if (request.status == ContextStatus.CONFIRMED &&
+            normalizedSources.any { it.trust == SourceTrust.AGENT_INFERRED }
+        ) return MutationResult.InvalidRequest
+
         val canonical = request.copy(
+            sources = normalizedSources,
             contextId = canonicalId(request.contextId),
             requestId = canonicalId(request.requestId),
             title = normalize(request.title),
@@ -73,6 +81,7 @@ class TrustedMutationGateway(
             sensitivity = canonical.sensitivity,
             validFromEpochMillis = canonical.validFromEpochMillis,
             validUntilEpochMillis = canonical.validUntilEpochMillis,
+            sources = canonical.sources.map { it.unverified() },
         )
         return contextService.create(principal, aggregate, canonical.requestId, digest)
     }
@@ -87,6 +96,9 @@ class TrustedMutationGateway(
             !validInterval(request.patch.validFromEpochMillis, request.patch.validUntilEpochMillis)
         ) return MutationResult.InvalidRequest
 
+        val normalizedSources = try { request.patch.sources?.let(SourceReferencePolicy::normalizeMany) }
+            catch (_: IllegalArgumentException) { return MutationResult.InvalidRequest }
+
         val canonical = request.copy(
             contextId = canonicalId(request.contextId),
             requestId = canonicalId(request.requestId),
@@ -95,6 +107,7 @@ class TrustedMutationGateway(
                 summary = request.patch.summary?.let(::normalize),
                 content = request.patch.content?.let(::normalize),
                 scopes = request.patch.scopes?.map(::normalize)?.toSet(),
+                sources = normalizedSources,
             ),
         )
         val digest = CanonicalMutationDigest.update(principal, canonical.requestId, canonical)

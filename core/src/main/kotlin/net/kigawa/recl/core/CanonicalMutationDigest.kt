@@ -23,6 +23,7 @@ object CanonicalMutationDigest {
             string("sensitivity", command.sensitivity.name)
             long("validFromEpochMillis", command.validFromEpochMillis)
             long("validUntilEpochMillis", command.validUntilEpochMillis)
+            sources("sources", command.sources)
         }.sha256()
 
     fun update(principal: Principal, requestId: String, command: UpdateContextMutation): String =
@@ -37,6 +38,7 @@ object CanonicalMutationDigest {
             string("patch.sensitivity", command.patch.sensitivity?.name)
             long("patch.validFromEpochMillis", command.patch.validFromEpochMillis)
             long("patch.validUntilEpochMillis", command.patch.validUntilEpochMillis)
+            sources("patch.sources", command.patch.sources)
         }.sha256()
 
     fun delete(principal: Principal, requestId: String, command: DeleteContextMutation): String =
@@ -49,7 +51,7 @@ object CanonicalMutationDigest {
         private val data = DataOutputStream(buffer)
 
         init {
-            string("domain", "recl.mutation.v3")
+            string("domain", "recl.mutation.v4")
             string("operation", operation)
             string("tenant", principal.tenantId)
             string("principal", principal.id)
@@ -73,6 +75,25 @@ object CanonicalMutationDigest {
             bytes(name.toByteArray(StandardCharsets.UTF_8))
             data.writeBoolean(value != null)
             if (value != null) data.writeBoolean(value)
+        }
+
+        /** The list order is not semantic; IDs are stable and unique at the trusted gateway. */
+        fun sources(name: String, values: List<SourceSubmission>?) {
+            bytes(name.toByteArray(StandardCharsets.UTF_8))
+            data.writeBoolean(values != null)
+            if (values != null) {
+                val sorted = values.sortedBy { it.sourceId }
+                data.writeInt(sorted.size)
+                for (source in sorted) {
+                    string("sourceId", source.sourceId)
+                    string("type", source.type.name)
+                    string("uri", source.uri)
+                    string("locator", source.locator)
+                    long("retrievedAtEpochMillis", source.retrievedAtEpochMillis)
+                    string("contentDigest", source.contentDigest)
+                    string("trust", source.trust.name)
+                }
+            }
         }
 
         fun scopes(name: String, values: Set<String>) = optionalScopes(name, values)
