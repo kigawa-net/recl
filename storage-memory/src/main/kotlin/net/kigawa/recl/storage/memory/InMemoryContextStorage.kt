@@ -6,11 +6,64 @@ import net.kigawa.recl.core.EnumerationResult
 import net.kigawa.recl.core.ReadResult
 import net.kigawa.recl.core.StoredContext
 import net.kigawa.recl.core.WriteResult
+import net.kigawa.recl.core.SourceGrantFence
+import net.kigawa.recl.core.GrantFencedContextCommit
+import net.kigawa.recl.core.GrantFencedWriteResult
+import net.kigawa.recl.core.VerificationState
+import java.time.Clock
 
 /** Ephemeral, JVM-only test adapter. NEVER use as a production failover. */
-class InMemoryContextStorage : ContextStorage {
+class InMemoryContextStorage(private val clock: Clock = Clock.systemUTC()) : ContextStorage, GrantFencedContextCommit {
     private val lock = Any()
     private val data = mutableMapOf<Pair<String, String>, StoredContext>()
+    private data class GrantState(val fence: SourceGrantFence, val revoked: Boolean)
+    private val grantStates = mutableMapOf<Triple<String, String, Long>, GrantState>()
+
+    /** Deterministic test-only authority; a real system MUST use Fortis single-group apply. */
+    fun installGrantForTestOnly(fence: SourceGrantFence) = synchronized(lock) {
+        val key = Triple(fence.tenantId, fence.ownerId, fence.repositoryId)
+        val old = grantStates[key]
+        require(old == null || fence.generation > old.fence.generation) {
+            "regrant must advance the immutable generation even after revocation"
+        }
+        grantStates[key] = GrantState(fence, revoked = false)
+    }
+
+    fun revokeGrantForTestOnly(fence: SourceGrantFence) = synchronized(lock) {
+        val key = Triple(fence.tenantId, fence.ownerId, fence.repositoryId)
+        val old = grantStates[key] ?: return@synchronized
+        grantStates[key] = old.copy(revoked = true)
+    }
+
+    /** Both grant and Context checks occur under the SAME test-local lock. NEVER a production adapter. */
+    override fun compareAndSwapWithGrant(
+        tenantId: String,
+        contextId: String,
+        expectedStorageRevision: Long,
+        updated: ContextAggregate,
+        fence: SourceGrantFence,
+    ): GrantFencedWriteResult = synchronized(lock) {
+        val key = Triple(fence.tenantId, fence.ownerId, fence.repositoryId)
+        val state = grantStates[key]
+        if (state == null || state.revoked || state.fence != fence ||
+            fence.tenantId != tenantId || fence.expiresAtEpochMillis <= clock.millis()
+        ) return@synchronized GrantFencedWriteResult.GrantRevoked
+        val current = data[tenantId to contextId]
+            ?: return@synchronized GrantFencedWriteResult.Conflict
+        if (current.storageRevision != expectedStorageRevision ||
+            updated.tenantId != tenantId || updated.id != contextId ||
+            updated.ownerId != fence.ownerId ||
+            updated.contentRevision != current.value.contentRevision + 1
+        ) return@synchronized GrantFencedWriteResult.Conflict
+        if (updated.sources.none { it.verification == VerificationState.VERIFIED &&
+                it.evidence?.sourceGrantFence == fence
+            }
+        ) return@synchronized GrantFencedWriteResult.Conflict
+        data[tenantId to contextId] =
+            StoredContext(snapshot(updated), current.storageRevision + 1)
+        GrantFencedWriteResult.Applied
+    }
+
 
     override fun get(tenantId: String, id: String): ReadResult = synchronized(lock) {
         val stored = data[tenantId to id] ?: return@synchronized ReadResult.NotFound

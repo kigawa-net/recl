@@ -19,6 +19,8 @@ data class VerificationEvidence(
     val attestationId: String,
     val verifiedAtEpochMillis: Long,
     val expiresAtEpochMillis: Long,
+    /** Server-side Grant Epoch, never supplied by a client SourceSubmission. */
+    val sourceGrantFence: SourceGrantFence? = null,
 ) {
     init {
         val safeId = Regex("[A-Za-z0-9._:-]{1,128}")
@@ -57,6 +59,8 @@ sealed interface SourceVerificationResult {
     data object Unavailable : SourceVerificationResult
     data object OutcomeUnknown : SourceVerificationResult
     data object RejectedEvidence : SourceVerificationResult
+    data object GrantRevoked : SourceVerificationResult
+    data object CapabilityUnsupported : SourceVerificationResult
 }
 
 /**
@@ -73,6 +77,9 @@ class SourceVerificationService(
     private val clock: Clock = Clock.systemUTC(),
     private val maxEvidenceMillis: Long = 24L * 60 * 60 * 1000,
     private val maxCasAttempts: Int = 8,
+    /** Production GitHub verification MUST set this to true and provide an atomic commit port. */
+    private val requireGrantFenceForVerified: Boolean = false,
+    private val fencedCommit: GrantFencedContextCommit? = null,
 ) {
     init {
         require(expectedAudience.isNotBlank() && expectedAudience.length <= 128)
@@ -127,6 +134,14 @@ class SourceVerificationService(
                     e.expiresAtEpochMillis <= now ||
                     e.expiresAtEpochMillis - e.verifiedAtEpochMillis > maxEvidenceMillis
                 ) return SourceVerificationResult.RejectedEvidence
+                if (e.sourceGrantFence != null &&
+                    (!e.sourceGrantFence.authorizes(start.tenantId, start.ownerId, source, now) ||
+                     e.expiresAtEpochMillis > e.sourceGrantFence.expiresAtEpochMillis)
+                ) return SourceVerificationResult.RejectedEvidence
+                if (requireGrantFenceForVerified && e.sourceGrantFence == null)
+                    return SourceVerificationResult.CapabilityUnsupported
+                if (e.sourceGrantFence != null && fencedCommit == null)
+                    return SourceVerificationResult.CapabilityUnsupported
                 targetEvidence = e
                 targetState = VerificationState.VERIFIED
             }
@@ -176,11 +191,34 @@ class SourceVerificationService(
             } catch (_: IllegalArgumentException) {
                 return SourceVerificationResult.RejectedEvidence
             }
-            when (storage.compareAndSwap(tenantId, contextId, current.storageRevision, updated)) {
-                is WriteResult.Applied -> return SourceVerificationResult.Applied(nextRevision)
-                WriteResult.Conflict -> Unit
-                WriteResult.OutcomeUnknown -> return SourceVerificationResult.OutcomeUnknown
-                WriteResult.Unavailable -> return SourceVerificationResult.Unavailable
+            val fence = targetEvidence?.sourceGrantFence
+            if (fence != null) {
+                // Must not attach expired evidence or a revoked lease even after a slow retry.
+                if (targetEvidence.expiresAtEpochMillis <= clock.millis() ||
+                    !fence.authorizes(tenantId, current.value.ownerId, matched, clock.millis()))
+                    return SourceVerificationResult.GrantRevoked
+                // The implementation MUST compare the live grant epoch and Context CAS atomically.
+                when (try {
+                    fencedCommit!!.compareAndSwapWithGrant(
+                        tenantId, contextId, current.storageRevision, updated, fence
+                    )
+                } catch (_: Exception) { GrantFencedWriteResult.Unavailable }) {
+                    GrantFencedWriteResult.Applied -> return SourceVerificationResult.Applied(nextRevision)
+                    GrantFencedWriteResult.Conflict -> Unit
+                    GrantFencedWriteResult.GrantRevoked -> return SourceVerificationResult.GrantRevoked
+                    GrantFencedWriteResult.Unsupported -> return SourceVerificationResult.CapabilityUnsupported
+                    GrantFencedWriteResult.Unavailable -> return SourceVerificationResult.Unavailable
+                    GrantFencedWriteResult.OutcomeUnknown -> return SourceVerificationResult.OutcomeUnknown
+                }
+            } else {
+                if (requireGrantFenceForVerified && targetState == VerificationState.VERIFIED)
+                    return SourceVerificationResult.CapabilityUnsupported
+                when (storage.compareAndSwap(tenantId, contextId, current.storageRevision, updated)) {
+                    is WriteResult.Applied -> return SourceVerificationResult.Applied(nextRevision)
+                    WriteResult.Conflict -> Unit
+                    WriteResult.OutcomeUnknown -> return SourceVerificationResult.OutcomeUnknown
+                    WriteResult.Unavailable -> return SourceVerificationResult.Unavailable
+                }
             }
         }
         return SourceVerificationResult.OutcomeUnknown

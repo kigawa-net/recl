@@ -10,6 +10,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.Base64
+import net.kigawa.recl.core.SourceGrantFence
 
 /**
  * A trusted authoritative record, not a claim from Context.scopes or a GitHub URI.
@@ -23,6 +24,8 @@ data class GitHubInstallationGrant(
     val generation: Long,
     val expiresAtEpochMillis: Long,
     val revoked: Boolean = false,
+    /** Immutable GitHub repository database ID. A name is not a transfer-proof identity. */
+    val repositoryId: Long = 0,
 ) {
     init {
         require(tenantId.isNotBlank() && ownerId.isNotBlank())
@@ -53,7 +56,7 @@ class AuthoritativeGitHubAppAccess(
     private val ledger: GitHubInstallationGrantLedger,
     private val issuer: GitHubInstallationTokenIssuer,
     private val clock: Clock = Clock.systemUTC(),
-) : GitHubRepositoryGrant, GitHubInstallationCredentials {
+) : GitHubRepositoryGrant, GitHubInstallationCredentials, GitHubGrantFenceProvider {
     private fun current(
         scope: net.kigawa.recl.core.SourceVerificationScope,
         repo: GitHubRepository,
@@ -67,6 +70,20 @@ class AuthoritativeGitHubAppAccess(
             found.revoked || found.expiresAtEpochMillis <= now + 30_000
         ) return null
         return found
+    }
+
+    override fun acquireFence(
+        scope: net.kigawa.recl.core.SourceVerificationScope,
+        repository: GitHubRepository,
+    ): SourceGrantFence? {
+        val record = current(scope, repository) ?: return null
+        if (record.repositoryId <= 0) return null
+        return SourceGrantFence(
+            tenantId = record.tenantId, ownerId = record.ownerId,
+            repositoryOwner = record.repository.owner, repositoryName = record.repository.name,
+            repositoryId = record.repositoryId, installationId = record.installationId,
+            generation = record.generation, expiresAtEpochMillis = record.expiresAtEpochMillis,
+        )
     }
 
     override fun canRead(
