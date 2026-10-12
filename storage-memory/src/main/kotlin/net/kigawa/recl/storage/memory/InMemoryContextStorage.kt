@@ -13,6 +13,16 @@ import net.kigawa.recl.core.VerificationState
 import net.kigawa.recl.core.TrustedGrantEpochReader
 import net.kigawa.recl.core.GrantEpochReadResult
 import net.kigawa.recl.core.Principal
+import net.kigawa.recl.core.ContextSnapshot
+import net.kigawa.recl.core.TrustedPromptOutputBarrier
+import net.kigawa.recl.core.TrustedPromptSink
+import net.kigawa.recl.core.TrustedPromptSendResult
+import net.kigawa.recl.core.PromptOutputRequest
+import net.kigawa.recl.core.PromptOutputResult
+import net.kigawa.recl.core.ContextTokenCounter
+import net.kigawa.recl.core.SourceGrantReadAdmission
+import net.kigawa.recl.core.ReadAdmissionDecision
+import net.kigawa.recl.core.Sensitivity
 import java.time.Clock
 
 /** Ephemeral, JVM-only test adapter. NEVER use as a production failover. */
@@ -80,6 +90,85 @@ class InMemoryContextStorage(private val clock: Clock = Clock.systemUTC()) : Con
         GrantFencedWriteResult.Applied
     }
 
+
+    /**
+     * Test-only output barrier: shares a single process monitor with grant revocations and
+     * Context writes and holds it until the sink has returned. No network, crash, replica,
+     * timeout or durable receipt semantics: DO NOT bind to a real production Model Gateway.
+     */
+    fun promptBarrierForTestOnly(tokenCounter: ContextTokenCounter): TrustedPromptOutputBarrier =
+        TrustedPromptOutputBarrier { request, sink ->
+            synchronized(lock) {
+                if (request.query.tokenBudget !in 1..100_000 ||
+                    request.query.maxContexts !in 1..100 ||
+                    request.query.scopes.size > 32 ||
+                    request.query.scopes.any { it.isBlank() || it.length > 256 } ||
+                    request.selection.contexts.size > request.query.maxContexts ||
+                    request.selection.usedTokens < 0 ||
+                    request.selection.usedTokens > request.query.tokenBudget
+                ) return@synchronized PromptOutputResult.InvalidRequest
+                val selection = request.selection.contexts.toList()
+                if (selection.map { it.id }.distinct().size != selection.size)
+                    return@synchronized PromptOutputResult.InvalidRequest
+                if (selection.isEmpty()) return@synchronized PromptOutputResult.NotSent
+                val now = clock.millis()
+                val admitted = ArrayList<ContextSnapshot>(selection.size)
+                var cost = 0
+                val readAdmission = SourceGrantReadAdmission(this)
+                for (requested in selection) {
+                    val stored = data[request.principal.tenantId to requested.id]
+                        ?: return@synchronized PromptOutputResult.Forbidden
+                    val current = stored.value
+                    if (current.tenantId != request.principal.tenantId ||
+                        current.ownerId != request.principal.id ||
+                        !current.eligibleForAutomaticInjection(now) ||
+                        current.sensitivity !in setOf(Sensitivity.PUBLIC, Sensitivity.INTERNAL) ||
+                        (request.query.scopes.isNotEmpty() &&
+                         "global" !in current.scopes &&
+                         current.scopes.none { it in request.query.scopes })
+                    ) return@synchronized PromptOutputResult.Forbidden
+                    when (readAdmission.check(request.principal, current, now)) {
+                        ReadAdmissionDecision.Allowed -> Unit
+                        ReadAdmissionDecision.Denied -> return@synchronized PromptOutputResult.Forbidden
+                        ReadAdmissionDecision.Unsupported -> return@synchronized PromptOutputResult.Unsupported
+                        ReadAdmissionDecision.Unavailable -> return@synchronized PromptOutputResult.Unavailable
+                    }
+                    val fresh = ContextSnapshot(
+                        id = current.id, kind = current.kind, status = current.status,
+                        title = current.title, summary = current.summary,
+                        content = current.content, scopes = current.scopes.toSet(),
+                        contentRevision = current.contentRevision,
+                        sensitivity = current.sensitivity,
+                        validFromEpochMillis = current.validFromEpochMillis,
+                        validUntilEpochMillis = current.validUntilEpochMillis,
+                        sources = current.sources.map { it.publicAt(now) },
+                    )
+                    if (fresh != requested) return@synchronized PromptOutputResult.Forbidden
+                    val itemCost = try { tokenCounter.count(fresh) } catch (_: Exception) {
+                        return@synchronized PromptOutputResult.Unavailable
+                    }
+                    if (itemCost <= 0 || itemCost > request.query.tokenBudget - cost)
+                        return@synchronized PromptOutputResult.InvalidRequest
+                    cost += itemCost
+                    admitted += fresh
+                }
+                if (cost != request.selection.usedTokens)
+                    return@synchronized PromptOutputResult.InvalidRequest
+                // The single-process test lock gives a deterministic ordering between
+                // revocation and the synchronous send. Production needs a distributed
+                // lease/barrier protocol with bounded blocking and a durable send journal.
+                try {
+                    when (sink.send(request.destination, admitted.toList())) {
+                        TrustedPromptSendResult.Accepted -> PromptOutputResult.Accepted
+                        TrustedPromptSendResult.DefinitelyNotSent -> PromptOutputResult.NotSent
+                        TrustedPromptSendResult.OutcomeUnknown -> PromptOutputResult.OutcomeUnknown
+                    }
+                } catch (_: Exception) {
+                    // A network exception does not prove the remote side did not receive bytes.
+                    PromptOutputResult.OutcomeUnknown
+                }
+            }
+        }
 
     override fun get(tenantId: String, id: String): ReadResult = synchronized(lock) {
         val stored = data[tenantId to id] ?: return@synchronized ReadResult.NotFound
