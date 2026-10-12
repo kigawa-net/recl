@@ -24,6 +24,11 @@ fun interface GitHubRepositoryGrant {
     fun canRead(scope: SourceVerificationScope, repository: GitHubRepository): Boolean
 }
 
+/** Optional server-only grant epoch source; never produce epochs from client Scope/URI. */
+fun interface GitHubGrantFenceProvider {
+    fun acquireFence(scope: SourceVerificationScope, repository: GitHubRepository): SourceGrantFence?
+}
+
 class GitHubInstallationToken(val value: String, val expiresAtEpochMillis: Long) {
     init {
         require(value.isNotBlank() && !value.any { it.isISOControl() })
@@ -182,6 +187,14 @@ class GitHubSourceAttestor(
         val allowed = try { grants.canRead(scope, target.repository) }
             catch (_: Exception) { false }
         if (!allowed) return SourceAttestationResult.Unavailable
+        // Fence-capable credentials and grant should reference the SAME authority.
+        val fenceSource = grants as? GitHubGrantFenceProvider
+        val initialFence = if (fenceSource != null) {
+            try { fenceSource.acquireFence(scope, target.repository) }
+                catch (_: Exception) { null }
+        } else null
+        if (fenceSource != null && initialFence == null)
+            return SourceAttestationResult.Unavailable
         val token = try { credentials.getToken(scope, target.repository) }
             catch (_: Exception) { null }
         val now = clock.millis()
@@ -196,6 +209,12 @@ class GitHubSourceAttestor(
                 val stillAllowed = try { grants.canRead(scope, target.repository) }
                     catch (_: Exception) { false }
                 if (!stillAllowed) return SourceAttestationResult.Unavailable
+                if (fenceSource != null) {
+                    val after = try { fenceSource.acquireFence(scope, target.repository) }
+                        catch (_: Exception) { null }
+                    if (after == null || after != initialFence)
+                        return SourceAttestationResult.Unavailable
+                }
                 if (token.expiresAtEpochMillis <= clock.millis() + 30_000)
                     return SourceAttestationResult.Unavailable
                 val projection = GitHubEvidenceDigest.fromResponse(target, response.body)
@@ -217,6 +236,7 @@ class GitHubSourceAttestor(
                         providerIdentity = "github-app", audience = audience,
                         attestationId = id, verifiedAtEpochMillis = now,
                         expiresAtEpochMillis = expiry,
+                        sourceGrantFence = initialFence,
                     )
                 )
             }
