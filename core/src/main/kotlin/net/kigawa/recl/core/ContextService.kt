@@ -4,6 +4,7 @@ sealed interface MutationResult {
     data class Applied(val contentRevision: Long, val replayed: Boolean = false) : MutationResult
     data class Conflict(val actualRevision: Long?) : MutationResult
     data object Forbidden : MutationResult
+    data object InvalidRequest : MutationResult
     data object NotFound : MutationResult
     data object RequestIdReused : MutationResult
     data object OutcomeUnknown : MutationResult
