@@ -192,4 +192,16 @@ class ContextSourceProvenanceTest {
         assertEquals(SourceTrust.entries.map { it.name }.toSet(), setOf(
             "USER_STATED", "PRIMARY_SOURCE", "AGENT_OBSERVED", "AGENT_INFERRED"))
     }
+
+    @Test fun `user stated label cannot bypass independent source verification`() {
+        val claimed = source(trust = SourceTrust.USER_STATED)
+        assertEquals(MutationResult.Applied(1),
+            gateway.create("verified-owner", create(listOf(claimed))))
+        val direct = ContextReader(store).get(owner, ctxId) as ContextReadResult.Found
+        assertEquals(SourceTrust.USER_STATED, direct.context.sources.single().trust)
+        assertEquals(VerificationState.UNVERIFIED, direct.context.sources.single().verification)
+        val pinned = PinnedContextReader(store, ContextTokenCounter { 1 })
+            .list(owner, PinnedQuery(setOf("project:recl"), 10, 10)) as PinnedContextResult.Found
+        assertEquals(emptyList<String>(), pinned.contexts.map { it.id })
+    }
 }

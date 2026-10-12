@@ -89,7 +89,8 @@ object SourceReferencePolicy {
         require(id.matches(source.sourceId)) { "invalid sourceId" }
         require(source.uri.length in 1..2048 && !source.uri.any { it.isISOControl() })
         require(source.locator == null || (source.locator.length <= 512 &&
-            !source.locator.any { it.isISOControl() }))
+            !source.locator.any { it.isISOControl() || it in "?&=@" } &&
+            !dangerousSegment.containsMatchIn(source.locator))) { "unsafe locator" }
         require(source.contentDigest == null || digest.matches(source.contentDigest))
         require(source.retrievedAtEpochMillis == null || source.retrievedAtEpochMillis >= 0L)
         // Must be an approved immutable/opaque reference shape; not necessarily verified evidence.

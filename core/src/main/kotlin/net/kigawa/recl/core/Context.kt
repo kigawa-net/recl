@@ -67,8 +67,7 @@ data class ContextAggregate(
         pinned && !deleted && status == ContextStatus.CONFIRMED &&
         sensitivity in setOf(Sensitivity.PUBLIC, Sensitivity.INTERNAL) && isValidAt(nowEpochMillis) &&
         // Unverified primary/agent evidence is not promoted to a confirmed prompt assertion.
-        sources.all { it.trust == SourceTrust.USER_STATED ||
-            it.verification == VerificationState.VERIFIED }
+        sources.all { it.verification == VerificationState.VERIFIED }
 
     companion object { const val MAX_RECEIPTS = 32 }
 }
