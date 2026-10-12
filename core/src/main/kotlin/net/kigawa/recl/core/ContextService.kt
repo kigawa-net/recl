@@ -45,7 +45,9 @@ class ContextService(private val storage: ContextStorage, private val maxRetries
             if (current.value.deleted) return MutationResult.NotFound
             if (current.value.contentRevision != expectedContentRevision) return MutationResult.Conflict(current.value.contentRevision)
             val nextRevision = current.value.contentRevision + 1
-            val next = patch.applyTo(current.value).copy(
+            val patched = try { patch.applyTo(current.value) }
+                catch (_: IllegalArgumentException) { return MutationResult.InvalidRequest }
+            val next = patched.copy(
                 contentRevision = nextRevision,
                 indexAction = IndexAction.UPSERT,
                 operationReceipts = appendReceipt(current.value.operationReceipts, requestId, digest, nextRevision),

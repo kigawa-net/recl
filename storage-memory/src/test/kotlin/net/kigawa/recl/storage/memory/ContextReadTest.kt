@@ -38,7 +38,7 @@ class ContextReadTest {
         assertEquals("Details", view.context.content)
         assertEquals(1L, view.context.contentRevision)
         assertEquals(setOf("project:recl"), view.context.scopes)
-        assertEquals(setOf("id", "kind", "status", "title", "summary", "content", "scopes", "contentRevision"),
+        assertEquals(setOf("id", "kind", "status", "title", "summary", "content", "scopes", "contentRevision", "sensitivity", "validFromEpochMillis", "validUntilEpochMillis"),
             ContextSnapshot::class.java.declaredFields.filter { !it.isSynthetic }.map { it.name }.toSet())
     }
 

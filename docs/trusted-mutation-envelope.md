@@ -15,7 +15,7 @@ This document specifies the input boundary proposed in [#20](https://github.com/
 A digest is SHA-256 over a custom versioned, domain-separated binary envelope; **never** accept a client-supplied digest.
 
 ```text
-string("domain", "recl.mutation.v2")
+string("domain", "recl.mutation.v3")
 string("operation", create|update|delete)
 string("tenant", authenticatedTenantId)
 string("principal", authenticatedPrincipalId)
@@ -28,7 +28,7 @@ The `string`/optional long/optional set encoders write a fixed field name follow
 
 `null` (unspecified PATCH field) and `""` (explicit empty PATCH field) receive different digests. Kotlin's current `ContextPatch` does **not** support explicit JSON `null` field-clearing: REST/MCP DTOs must define whether such requests are rejected or require a separate operation.
 
-The digest binds the operation, target, revision and submitted fields. Version 2 additionally binds `pinned` on create and optional `patch.pinned` on update. The encoder version was advanced from `recl.mutation.v1` because changing a request digest while reusing the same domain version would invalidate stored replay receipts. Fortis durable receipt migration must explicitly account for previous versions. It is an **identity checksum**, not a signature. It does not authenticate a request or grant permissions.
+The digest binds the operation, target, revision and submitted fields. Version 2 additionally bound `pinned` on create and optional `patch.pinned` on update. The encoder version was advanced from `recl.mutation.v1` because changing a request digest while reusing the same domain version would invalidate stored replay receipts. Fortis durable receipt migration must explicitly account for previous versions. It is an **identity checksum**, not a signature. It does not authenticate a request or grant permissions.
 
 ## Idempotency and errors
 
@@ -50,3 +50,9 @@ The digest binds the operation, target, revision and submitted fields. Version 2
 - [Kivra contract compatibility #21](https://github.com/kigawa-net/recl/issues/21): this gateway does not make the provider API operational.
 
 This is an internal API hardening step, **not** evidence that recl's production REST/MCP service or Fortis Adapter exists.
+
+
+## v3 policy fields (Core, recl #28)
+- Create digests now bind `sensitivity`, `validFromEpochMillis`, and `validUntilEpochMillis`; update digests bind the optional corresponding patch fields.
+- `RESTRICTED` Context bodies are rejected, `CONFIDENTIAL` is not auto-injected into pinned prompts, and valid-time uses a trusted Clock.
+- Historical v1/v2 receipt digests are **not equivalent** to v3. See [validity and sensitivity](validity-sensitivity.md) and do not migrate persistent receipts without replay/version tests.

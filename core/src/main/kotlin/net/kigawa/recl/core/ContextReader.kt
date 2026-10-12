@@ -10,6 +10,9 @@ data class ContextSnapshot(
     val content: String,
     val scopes: Set<String>,
     val contentRevision: Long,
+    val sensitivity: Sensitivity = Sensitivity.INTERNAL,
+    val validFromEpochMillis: Long? = null,
+    val validUntilEpochMillis: Long? = null,
 )
 
 sealed interface ContextReadResult {
@@ -44,6 +47,9 @@ class ContextReader(private val storage: ContextStorage) {
             content = stored.content,
             scopes = stored.scopes.toSet(),
             contentRevision = stored.contentRevision,
+            sensitivity = stored.sensitivity,
+            validFromEpochMillis = stored.validFromEpochMillis,
+            validUntilEpochMillis = stored.validUntilEpochMillis,
         ))
     }
 }
