@@ -19,6 +19,7 @@ object CanonicalMutationDigest {
             string("summary", command.summary)
             string("content", command.content)
             scopes("scopes", command.scopes)
+            boolean("pinned", command.pinned)
         }.sha256()
 
     fun update(principal: Principal, requestId: String, command: UpdateContextMutation): String =
@@ -29,6 +30,7 @@ object CanonicalMutationDigest {
             string("patch.content", command.patch.content)
             string("patch.status", command.patch.status?.name)
             optionalScopes("patch.scopes", command.patch.scopes)
+            boolean("patch.pinned", command.patch.pinned)
         }.sha256()
 
     fun delete(principal: Principal, requestId: String, command: DeleteContextMutation): String =
@@ -41,7 +43,7 @@ object CanonicalMutationDigest {
         private val data = DataOutputStream(buffer)
 
         init {
-            string("domain", "recl.mutation.v1")
+            string("domain", "recl.mutation.v2")
             string("operation", operation)
             string("tenant", principal.tenantId)
             string("principal", principal.id)
@@ -59,6 +61,12 @@ object CanonicalMutationDigest {
             bytes(name.toByteArray(StandardCharsets.UTF_8))
             data.writeBoolean(value != null)
             if (value != null) data.writeLong(value)
+        }
+
+        fun boolean(name: String, value: Boolean?) {
+            bytes(name.toByteArray(StandardCharsets.UTF_8))
+            data.writeBoolean(value != null)
+            if (value != null) data.writeBoolean(value)
         }
 
         fun scopes(name: String, values: Set<String>) = optionalScopes(name, values)

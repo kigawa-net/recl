@@ -2,6 +2,7 @@ package net.kigawa.recl.storage.memory
 
 import net.kigawa.recl.core.ContextAggregate
 import net.kigawa.recl.core.ContextStorage
+import net.kigawa.recl.core.EnumerationResult
 import net.kigawa.recl.core.ReadResult
 import net.kigawa.recl.core.StoredContext
 import net.kigawa.recl.core.WriteResult
@@ -32,6 +33,16 @@ class InMemoryContextStorage : ContextStorage {
         val stored = StoredContext(snapshot(value), old.storageRevision + 1)
         data[key] = stored
         WriteResult.Applied(stored)
+    }
+
+    override fun enumerateTenant(tenantId: String, maxItems: Int): EnumerationResult = synchronized(lock) {
+        require(maxItems in 1..10_000)
+        val matches = data.filterKeys { it.first == tenantId }
+        // Do not report a truncated prefix as a complete, authoritative enumeration.
+        if (matches.size > maxItems) return@synchronized EnumerationResult.TooLarge
+        EnumerationResult.Complete(matches.values
+            .sortedBy { it.value.id }
+            .map { it.copy(value = snapshot(it.value)) })
     }
 
     private fun snapshot(value: ContextAggregate): ContextAggregate = value.copy(

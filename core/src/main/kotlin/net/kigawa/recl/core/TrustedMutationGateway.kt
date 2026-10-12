@@ -18,6 +18,7 @@ data class CreateContextMutation(
     val summary: String,
     val content: String,
     val scopes: Set<String> = emptySet(),
+    val pinned: Boolean = false,
 )
 
 data class UpdateContextMutation(
@@ -63,6 +64,7 @@ class TrustedMutationGateway(
             summary = canonical.summary,
             content = canonical.content,
             scopes = canonical.scopes,
+            pinned = canonical.pinned,
         )
         return contextService.create(principal, aggregate, canonical.requestId, digest)
     }

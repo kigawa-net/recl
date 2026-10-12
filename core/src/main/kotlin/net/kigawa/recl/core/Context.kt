@@ -26,6 +26,7 @@ data class ContextAggregate(
     val summary: String,
     val content: String,
     val scopes: Set<String> = emptySet(),
+    val pinned: Boolean = false,
     val contentRevision: Long = 1,
     val indexedContentRevision: Long = 0,
     val indexAction: IndexAction = IndexAction.UPSERT,
@@ -47,6 +48,7 @@ data class ContextPatch(
     val content: String? = null,
     val status: ContextStatus? = null,
     val scopes: Set<String>? = null,
+    val pinned: Boolean? = null,
 ) {
     fun applyTo(context: ContextAggregate): ContextAggregate = context.copy(
         title = title ?: context.title,
@@ -54,5 +56,6 @@ data class ContextPatch(
         content = content ?: context.content,
         status = status ?: context.status,
         scopes = scopes?.toSet() ?: context.scopes,
+        pinned = pinned ?: context.pinned,
     )
 }
