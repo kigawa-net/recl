@@ -157,13 +157,19 @@ class SourceVerificationService(
             if (matched != source) return SourceVerificationResult.Conflict(current.value.contentRevision)
 
             val nextRevision = current.value.contentRevision + 1
+            val nextSources = current.value.sources.map {
+                if (it.sourceId == sourceId)
+                    it.copy(verification = targetState, evidence = targetEvidence)
+                else it
+            }
+            // An inferred claim losing verification must never remain CONFIRMED.
+            val downgrade = current.value.status == ContextStatus.CONFIRMED &&
+                nextSources.any { it.trust == SourceTrust.AGENT_INFERRED &&
+                    it.verification != VerificationState.VERIFIED }
             val updated = try {
                 current.value.copy(
-                    sources = current.value.sources.map {
-                        if (it.sourceId == sourceId)
-                            it.copy(verification = targetState, evidence = targetEvidence)
-                        else it
-                    },
+                    sources = nextSources,
+                    status = if (downgrade) ContextStatus.PROPOSED else current.value.status,
                     contentRevision = nextRevision,
                     indexAction = IndexAction.UPSERT,
                 )

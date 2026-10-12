@@ -81,10 +81,26 @@ data class ContextSource(
              evidence.verifiedAtEpochMillis > nowEpochMillis)
         ) VerificationState.STALE else verification
 
-    /** Public citation never includes provider-identity, audience or receipt details. */
-    fun publicAt(nowEpochMillis: Long): ContextSource =
-        copy(verification = effectiveVerificationAt(nowEpochMillis), evidence = null)
+    /** Public citation never includes provider identity, audience or attestation receipt. */
+    fun publicAt(nowEpochMillis: Long): SourceCitation = SourceCitation(
+        sourceId = sourceId, type = type, uri = uri, locator = locator,
+        retrievedAtEpochMillis = retrievedAtEpochMillis,
+        contentDigest = contentDigest, trust = trust,
+        verification = effectiveVerificationAt(nowEpochMillis),
+    )
 }
+
+/** Public-safe citation view without the internal attestation or provider identity. */
+data class SourceCitation(
+    val sourceId: String,
+    val type: SourceType,
+    val uri: String,
+    val locator: String?,
+    val retrievedAtEpochMillis: Long?,
+    val contentDigest: String?,
+    val trust: SourceTrust,
+    val verification: VerificationState,
+)
 
 /** Strict MVP reference syntax. No network requests are made from this validator. */
 object SourceReferencePolicy {

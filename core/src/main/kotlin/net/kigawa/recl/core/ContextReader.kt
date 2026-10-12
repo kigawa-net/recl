@@ -16,7 +16,7 @@ data class ContextSnapshot(
     val validFromEpochMillis: Long? = null,
     val validUntilEpochMillis: Long? = null,
     /** Citation claims retain their trust and verification state; never imply implicit verification. */
-    val sources: List<ContextSource> = emptyList(),
+    val sources: List<SourceCitation> = emptyList(),
 )
 
 sealed interface ContextReadResult {
