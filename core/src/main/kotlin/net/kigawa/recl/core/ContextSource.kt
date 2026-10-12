@@ -56,12 +56,34 @@ data class ContextSource(
     val contentDigest: String?,
     val trust: SourceTrust,
     val verification: VerificationState = VerificationState.UNVERIFIED,
+    /** Internal only; never accepted on a caller-submitted SourceSubmission. */
+    val evidence: VerificationEvidence? = null,
 ) {
     init {
         SourceReferencePolicy.validate(SourceSubmission(
             sourceId, type, uri, locator, retrievedAtEpochMillis, contentDigest, trust
         ))
+        require(verification == VerificationState.VERIFIED || evidence == null) {
+            "only VERIFIED citations may retain an attestation"
+        }
+        if (verification == VerificationState.VERIFIED) {
+            require(evidence != null && evidence.sourceId == sourceId &&
+                evidence.canonicalUri == uri && contentDigest != null &&
+                evidence.contentDigest == contentDigest) {
+                "VERIFIED requires matching internal evidence"
+            }
+        }
     }
+
+    fun effectiveVerificationAt(nowEpochMillis: Long): VerificationState =
+        if (verification == VerificationState.VERIFIED &&
+            (evidence == null || evidence.expiresAtEpochMillis <= nowEpochMillis ||
+             evidence.verifiedAtEpochMillis > nowEpochMillis)
+        ) VerificationState.STALE else verification
+
+    /** Public citation never includes provider-identity, audience or receipt details. */
+    fun publicAt(nowEpochMillis: Long): ContextSource =
+        copy(verification = effectiveVerificationAt(nowEpochMillis), evidence = null)
 }
 
 /** Strict MVP reference syntax. No network requests are made from this validator. */

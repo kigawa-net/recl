@@ -67,7 +67,7 @@ data class ContextAggregate(
         pinned && !deleted && status == ContextStatus.CONFIRMED &&
         sensitivity in setOf(Sensitivity.PUBLIC, Sensitivity.INTERNAL) && isValidAt(nowEpochMillis) &&
         // Unverified primary/agent evidence is not promoted to a confirmed prompt assertion.
-        sources.all { it.verification == VerificationState.VERIFIED }
+        sources.all { it.effectiveVerificationAt(nowEpochMillis) == VerificationState.VERIFIED }
 
     companion object { const val MAX_RECEIPTS = 32 }
 }
@@ -85,7 +85,20 @@ data class ContextPatch(
     /** null: unchanged, empty: clear, nonempty: replace all source citations. */
     val sources: List<SourceSubmission>? = null,
 ) {
-    fun applyTo(context: ContextAggregate): ContextAggregate = context.copy(
+    fun applyTo(context: ContextAggregate): ContextAggregate {
+        // Attestations bind the previous factual claim. Changing the claim revokes its proof.
+        val claimChanged =
+            (title != null && title != context.title) ||
+            (summary != null && summary != context.summary) ||
+            (content != null && content != context.content)
+        val nextSources = sources?.let {
+            SourceReferencePolicy.normalizeMany(it).map(SourceSubmission::unverified)
+        } ?: if (claimChanged) {
+            context.sources.map { it.copy(verification = VerificationState.UNVERIFIED, evidence = null) }
+        } else {
+            context.sources
+        }
+        return context.copy(
         title = title ?: context.title,
         summary = summary ?: context.summary,
         content = content ?: context.content,
@@ -95,7 +108,7 @@ data class ContextPatch(
         sensitivity = sensitivity ?: context.sensitivity,
         validFromEpochMillis = validFromEpochMillis ?: context.validFromEpochMillis,
         validUntilEpochMillis = validUntilEpochMillis ?: context.validUntilEpochMillis,
-        sources = sources?.let { SourceReferencePolicy.normalizeMany(it).map { source -> source.unverified() } }
-            ?: context.sources,
-    )
+        sources = nextSources,
+        )
+    }
 }
