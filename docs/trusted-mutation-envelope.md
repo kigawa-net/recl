@@ -15,7 +15,7 @@ This document specifies the input boundary proposed in [#20](https://github.com/
 A digest is SHA-256 over a custom versioned, domain-separated binary envelope; **never** accept a client-supplied digest.
 
 ```text
-string("domain", "recl.mutation.v3")
+string("domain", "recl.mutation.v4")
 string("operation", create|update|delete)
 string("tenant", authenticatedTenantId)
 string("principal", authenticatedPrincipalId)
@@ -56,3 +56,10 @@ This is an internal API hardening step, **not** evidence that recl's production 
 - Create digests now bind `sensitivity`, `validFromEpochMillis`, and `validUntilEpochMillis`; update digests bind the optional corresponding patch fields.
 - `RESTRICTED` Context bodies are rejected, `CONFIDENTIAL` is not auto-injected into pinned prompts, and valid-time uses a trusted Clock.
 - Historical v1/v2 receipt digests are **not equivalent** to v3. See [validity and sensitivity](validity-sensitivity.md) and do not migrate persistent receipts without replay/version tests.
+
+
+## v4 source attribution (recl #30)
+- Source references are now included in the **internal** domain-separated digest for both create and patch. The canonical encoding sorts unique sources by `sourceId` and binds type, URI, locator, retrieval time, content hash and trust classification.
+- The server-origin `verification` field is **not part of a client request**; SourceSubmission cannot claim `VERIFIED`.
+- Previous v1/v2/v3 receipt digests cannot be silently replayed as v4. Future Fortis persistent receipt migration remains unimplemented.
+- All client-origin citations begin as `UNVERIFIED`; no source-bearing Context is eligible for automatic Pinned injection until independent verification. See [source-provenance.md](source-provenance.md).

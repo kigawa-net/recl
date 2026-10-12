@@ -86,7 +86,7 @@ Current recl Core types are `decision | architecture | constraint | task | findi
 
 Kivra's `active/superseded/deleted` is not the same enum as recl's lifecycle; the adapter must deliberately transform states and reject unsupported states.
 
-Additional Kivra metadata, including `confidence`, `sensitivity`, `retention`, structured `provenance`, `WriteProvenance` (task/execution), may require new recl domain fields. **Not supported merely because Kivra's mock DTO includes them.**
+The recl internal Core now models sensitivity, valid-time and bounded unverified source references (recl #28/#30). This is **not a public API contract**. Kivra-specific confidence, retention and end-to-end WriteProvenance (task/execution) still require mapping, verifier evidence and tested public DTOs. **Mock compatibility does not establish production support.**
 
 ## 5. Scope and authorization
 
@@ -129,3 +129,7 @@ Additional Kivra metadata, including `confidence`, `sensitivity`, `retention`, s
 - A Capability advertises only the operations actually implemented; Kivra requires independently verified deployment-specific evidence to promote capabilities.
 
 **Acceptance gate:** This contract becomes authoritative only after a versioned API implementation and cross-provider contract tests have passed. Until then recl is an internal Core library with no production Memory Provider endpoint.
+
+
+## Internal source reference status (recl #30)
+The Core contains `SourceSubmission`/`ContextSource` types aligned to Kivra SourceType and MemoryProvenance labels, but incoming source references are **always UNVERIFIED**; no external verification/attestation or API route is implemented. Credential-bearing or presigned URLs are rejected, GitHub Commit references require immutable SHA, exkes references require immutable digest. The internal digest has advanced to `recl.mutation.v4`, distinct from this proposed external `recl.memory.v1` API contract. Cross-repo integration remains gated on [recl #21](https://github.com/kigawa-net/recl/issues/21) and [#32](https://github.com/kigawa-net/recl/issues/32).
