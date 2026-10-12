@@ -167,9 +167,21 @@ class ContextSourceProvenanceTest {
             (pin.list(owner, q) as PinnedContextResult.Found).contexts.map { it.id })
         // Only an internal trusted verifier may change a stored source's verification.
         val before = (store.get(tenant, ctxId) as ReadResult.Found).stored
+        val now = System.currentTimeMillis()
+        val source = before.value.sources.single()
+        val evidence = VerificationEvidence(
+            tenantId = tenant, contextId = ctxId, sourceId = source.sourceId,
+            canonicalUri = source.uri, contentDigest = source.contentDigest!!,
+            boundContentRevision = before.value.contentRevision,
+            providerIdentity = "github-app", audience = "recl-verifier",
+            attestationId = "receipt-1", verifiedAtEpochMillis = now,
+            expiresAtEpochMillis = now + 60_000,
+        )
         assertTrue(store.compareAndSwap(tenant, ctxId, before.storageRevision,
             before.value.copy(
-                sources = before.value.sources.map { it.copy(verification = VerificationState.VERIFIED) },
+                sources = before.value.sources.map {
+                    it.copy(verification = VerificationState.VERIFIED, evidence = evidence)
+                },
                 contentRevision = before.value.contentRevision + 1)
             ) is WriteResult.Applied)
         val pinned = pin.list(owner, q) as PinnedContextResult.Found

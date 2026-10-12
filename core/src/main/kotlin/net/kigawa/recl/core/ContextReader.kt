@@ -1,5 +1,7 @@
 package net.kigawa.recl.core
 
+import java.time.Clock
+
 /** A public view intentionally excludes physical CAS generations, receipts and index bookkeeping. */
 data class ContextSnapshot(
     val id: String,
@@ -14,7 +16,7 @@ data class ContextSnapshot(
     val validFromEpochMillis: Long? = null,
     val validUntilEpochMillis: Long? = null,
     /** Citation claims retain their trust and verification state; never imply implicit verification. */
-    val sources: List<ContextSource> = emptyList(),
+    val sources: List<SourceCitation> = emptyList(),
 )
 
 sealed interface ContextReadResult {
@@ -29,7 +31,7 @@ sealed interface ContextReadResult {
  * Authoritative direct-ID retrieval. No Qdrant or index snapshot may override a read failure.
  * The current policy is owner-only. Future ACL/RBAC must be enforced at this same boundary.
  */
-class ContextReader(private val storage: ContextStorage) {
+class ContextReader(private val storage: ContextStorage, private val clock: Clock = Clock.systemUTC()) {
     fun get(principal: Principal, contextId: String): ContextReadResult {
         val stored = when (val result = storage.get(principal.tenantId, contextId)) {
             is ReadResult.Found -> result.stored.value
@@ -52,7 +54,7 @@ class ContextReader(private val storage: ContextStorage) {
             sensitivity = stored.sensitivity,
             validFromEpochMillis = stored.validFromEpochMillis,
             validUntilEpochMillis = stored.validUntilEpochMillis,
-            sources = stored.sources.toList(),
+            sources = stored.sources.map { it.publicAt(clock.millis()) },
         ))
     }
 }
