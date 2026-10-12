@@ -85,6 +85,8 @@ data class PromptSendStartPermit(
     val principalId: String,
     val destination: PromptDestination,
     val requestDigest: String,
+    /** Server-derived hash of Context/Source -> immutable repository grant epoch bindings. */
+    val grantEpochDigest: String,
     val startedAtEpochMillis: Long,
     val expiresAtEpochMillis: Long,
 ) {
@@ -92,6 +94,7 @@ data class PromptSendStartPermit(
         require(permitId.matches(Regex("[A-Za-z0-9._:-]{1,128}")))
         require(tenantId.isNotBlank() && principalId.isNotBlank())
         require(requestDigest.matches(Regex("sha256:[0-9a-f]{64}")))
+        require(grantEpochDigest.matches(Regex("sha256:[0-9a-f]{64}")))
         require(startedAtEpochMillis >= 0 && expiresAtEpochMillis > startedAtEpochMillis)
         require(expiresAtEpochMillis - startedAtEpochMillis <= 5_000) {
             "unbounded admission lease is forbidden"

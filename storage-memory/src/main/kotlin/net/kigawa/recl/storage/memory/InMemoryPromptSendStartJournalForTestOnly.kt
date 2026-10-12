@@ -14,7 +14,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
     private val clock: Clock = Clock.systemUTC(),
     private val maxEntries: Int = 10_000,
     private val maxLeaseMillis: Long = 2_000,
-) : TrustedPromptSendStartJournal, TrustedPromptDispatchReceiptReader {
+) : TrustedPromptSendStartJournal, TrustedPromptDispatchReceiptReader, TrustedPromptPermitAdmission {
     init {
         require(maxEntries in 1..10_000)
         require(maxLeaseMillis in 1..5_000)
@@ -24,6 +24,10 @@ class InMemoryPromptSendStartJournalForTestOnly(
     private data class Record(
         val permit: PromptSendStartPermit,
         val requestDigest: String,
+        /** Safe metadata only; never persist raw ContextSnapshot/model prompt in receipts. */
+        val query: PinnedQuery,
+        val usedTokens: Int,
+        val limited: Boolean,
         val outcome: TrustedPromptSendResult? = null,
         val settledAtEpochMillis: Long? = null,
     )
@@ -90,6 +94,23 @@ class InMemoryPromptSendStartJournalForTestOnly(
                         result = PromptDispatchStartResult.Unsupported
                         TrustedPromptSendResult.DefinitelyNotSent
                     } else {
+                        // Server-derived Grant epoch is bound separately from the public
+                        // ContextSnapshot digest. This call executes under test Context lock.
+                        val grantRefs = contexts.flatMap { snapshot ->
+                            val raw = (storage.get(request.principal.tenantId, snapshot.id)
+                                as? ReadResult.Found)?.stored?.value
+                            raw?.sources?.mapNotNull { source ->
+                                source.evidence?.sourceGrantFence?.let { fence ->
+                                    PromptSourceGrantEpoch(snapshot.id, source.sourceId, fence)
+                                }
+                            } ?: emptyList()
+                        }
+                        if (grantRefs.isEmpty() ||
+                            grantRefs.size != contexts.sumOf { it.sources.size }
+                        ) {
+                            result = PromptDispatchStartResult.Forbidden
+                            TrustedPromptSendResult.DefinitelyNotSent
+                        } else {
                         val now = clock.millis()
                         // Trusted evidence/grants may expire before the intended lease.
                         val proofExpiry = contexts.minOfOrNull { snapshot ->
@@ -115,14 +136,20 @@ class InMemoryPromptSendStartJournalForTestOnly(
                                 principalId = request.principal.id,
                                 destination = request.destination,
                                 requestDigest = requestDigest,
+                                grantEpochDigest = PromptGrantEpochBinding.digest(grantRefs),
                                 startedAtEpochMillis = now,
                                 expiresAtEpochMillis = expires,
                             )
-                            records[identity] = Record(permit, requestDigest)
+                            records[identity] = Record(
+                                permit, requestDigest,
+                                request.query.copy(scopes = request.query.scopes.toSet()),
+                                request.selection.usedTokens, request.selection.limited,
+                            )
                             result = PromptDispatchStartResult.Started(permit, contexts.toList())
                             // Represents a durable logical send-start INTENT in this test
                             // model, NOT that a remote model has received anything.
                             TrustedPromptSendResult.Accepted
+                        }
                         }
                     }
                 }
@@ -136,6 +163,72 @@ class InMemoryPromptSendStartJournalForTestOnly(
             PromptOutputResult.InvalidRequest -> PromptDispatchStartResult.InvalidRequest
             PromptOutputResult.Unsupported -> PromptDispatchStartResult.Unsupported
             PromptOutputResult.Unavailable -> PromptDispatchStartResult.Unavailable
+        }
+    }
+
+    /**
+     * Test-only send-start preflight: validate the exact previously issued permit,
+     * recorded operation identity, current grant epoch and *all* selected snapshots under
+     * the test Context/Grant monitor. Do not call the external model from this callback.
+     *
+     * The check ends before a later downstream send; a real distributed transport MUST
+     * serialize authorization/lease with the actual wire-send-start operation itself.
+     */
+    override fun check(
+        permit: PromptSendStartPermit,
+        contexts: List<ContextSnapshot>,
+    ): PromptPermitAdmissionDecision {
+        val key = Identity(permit.tenantId, permit.principalId, permit.destination.operationId)
+        val record = synchronized(journalLock) { records[key] }
+            ?: return PromptPermitAdmissionDecision.Denied
+        if (record.permit != permit || record.outcome != null ||
+            clock.millis() < permit.startedAtEpochMillis ||
+            clock.millis() >= permit.expiresAtEpochMillis
+        ) return PromptPermitAdmissionDecision.Denied
+
+        val request = PromptOutputRequest(
+            principal = Principal(permit.tenantId, permit.principalId),
+            destination = permit.destination,
+            query = record.query,
+            selection = PinnedContextResult.Found(
+                contexts.toList(), record.usedTokens, record.limited
+            ),
+        )
+        if (try { PromptDispatchBinding.digest(request) != permit.requestDigest }
+            catch (_: Exception) { true }
+        ) return PromptPermitAdmissionDecision.Denied
+
+        var epochMatched = false
+        val checked = storage.promptBarrierForTestOnly(tokens).authorizeAndSend(
+            request,
+            TrustedPromptSink { _, validated ->
+                val grantRefs = validated.flatMap { snapshot ->
+                    val raw = (storage.get(permit.tenantId, snapshot.id)
+                        as? ReadResult.Found)?.stored?.value
+                    raw?.sources?.mapNotNull { source ->
+                        source.evidence?.sourceGrantFence?.let { fence ->
+                            PromptSourceGrantEpoch(snapshot.id, source.sourceId, fence)
+                        }
+                    } ?: emptyList()
+                }
+                epochMatched = grantRefs.isNotEmpty() &&
+                    grantRefs.size == validated.sumOf { it.sources.size } &&
+                    try { PromptGrantEpochBinding.digest(grantRefs) == permit.grantEpochDigest }
+                    catch (_: Exception) { false } &&
+                    synchronized(journalLock) {
+                        records[key]?.permit == permit && records[key]?.outcome == null
+                    }
+                // The test preflight never calls a model, even on successful admission.
+                TrustedPromptSendResult.DefinitelyNotSent
+            },
+        )
+        return when (checked) {
+            PromptOutputResult.NotSent ->
+                if (epochMatched) PromptPermitAdmissionDecision.Allowed
+                else PromptPermitAdmissionDecision.Denied
+            PromptOutputResult.Unsupported -> PromptPermitAdmissionDecision.Unsupported
+            PromptOutputResult.Unavailable -> PromptPermitAdmissionDecision.Unavailable
+            else -> PromptPermitAdmissionDecision.Denied
         }
     }
 
