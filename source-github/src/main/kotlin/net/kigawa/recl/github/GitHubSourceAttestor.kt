@@ -133,7 +133,7 @@ object GitHubEvidenceDigest {
                     fields = listOf(repo, target.identity, updatedAt, title, description,
                         state, head.lowercase(Locale.ROOT), base.lowercase(Locale.ROOT))
                 } else {
-                    if (root.has("pull_request")) return null
+                    if (root.has("pull_request") || root.has("head") || root.has("base")) return null
                     domain = "recl.github.issue.evidence.v1"
                     fields = listOf(repo, target.identity, updatedAt, title, description, state)
                 }
