@@ -127,6 +127,7 @@ class GrantFencedSourceVerificationTest {
             fence.copy(ownerId = "other-owner"),
             fence.copy(repositoryName = "another-repo"),
             fence.copy(expiresAtEpochMillis = epoch),
+            fence.copy(expiresAtEpochMillis = epoch + 20_000),
         )) {
             assertEquals(SourceVerificationResult.RejectedEvidence, verify(
                 attestor = TrustedSourceAttestor { _, _ ->

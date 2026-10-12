@@ -38,3 +38,7 @@ A successful initial proof can still outlive a later grant revocation for its TT
 - [ ] Kivra #71 deployment contract test and production capability attestation. 
 
 Related: recl #14/#16/#21/#26/#35/#37/#39; Fortis #34/#44/#45; Kivra #71.
+
+
+## Evidence lifetime is bounded by the grant
+A VerificationEvidence that expires after its bound Grant Epoch expiry is rejected by the Core even when the proof is otherwise cryptographically valid. This is defense in depth; a previously VERIFIED Context can still outlive an immediate revocation, so the live read/prompt admission barrier remains tracked separately in [recl #54](https://github.com/kigawa-net/recl/issues/54).

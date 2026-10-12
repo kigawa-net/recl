@@ -135,7 +135,8 @@ class SourceVerificationService(
                     e.expiresAtEpochMillis - e.verifiedAtEpochMillis > maxEvidenceMillis
                 ) return SourceVerificationResult.RejectedEvidence
                 if (e.sourceGrantFence != null &&
-                    !e.sourceGrantFence.authorizes(start.tenantId, start.ownerId, source, now)
+                    (!e.sourceGrantFence.authorizes(start.tenantId, start.ownerId, source, now) ||
+                     e.expiresAtEpochMillis > e.sourceGrantFence.expiresAtEpochMillis)
                 ) return SourceVerificationResult.RejectedEvidence
                 if (requireGrantFenceForVerified && e.sourceGrantFence == null)
                     return SourceVerificationResult.CapabilityUnsupported
