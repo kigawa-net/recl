@@ -14,7 +14,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
     private val clock: Clock = Clock.systemUTC(),
     private val maxEntries: Int = 10_000,
     private val maxLeaseMillis: Long = 2_000,
-) : TrustedPromptSendStartJournal {
+) : TrustedPromptSendStartJournal, TrustedPromptDispatchReceiptReader {
     init {
         require(maxEntries in 1..10_000)
         require(maxLeaseMillis in 1..5_000)
@@ -25,6 +25,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
         val permit: PromptSendStartPermit,
         val requestDigest: String,
         val outcome: TrustedPromptSendResult? = null,
+        val settledAtEpochMillis: Long? = null,
     )
     private val journalLock = Any()
     private val records = mutableMapOf<Identity, Record>()
@@ -34,6 +35,31 @@ class InMemoryPromptSendStartJournalForTestOnly(
     ): TrustedPromptSendResult? = synchronized(journalLock) {
         records[Identity(tenantId, principalId, operationId)]?.outcome
     }
+
+
+    override fun lookup(query: PromptDispatchReceiptQuery): PromptDispatchReceiptRead =
+        synchronized(journalLock) {
+            val identity = Identity(query.principal.tenantId, query.principal.id,
+                query.destination.operationId)
+            val record = records[identity]
+                ?: return@synchronized PromptDispatchReceiptRead.NotFound
+            if (record.permit.destination != query.destination ||
+                record.requestDigest != query.requestDigest
+            ) return@synchronized PromptDispatchReceiptRead.BindingConflict
+            val state = when (record.outcome) {
+                null -> PromptDispatchReceiptState.STARTED_PENDING
+                TrustedPromptSendResult.Accepted -> PromptDispatchReceiptState.TRANSPORT_ACCEPTED
+                TrustedPromptSendResult.DefinitelyNotSent ->
+                    PromptDispatchReceiptState.DEFINITELY_NOT_SENT
+                TrustedPromptSendResult.OutcomeUnknown -> PromptDispatchReceiptState.OUTCOME_UNKNOWN
+            }
+            PromptDispatchReceiptRead.Found(
+                state = state,
+                requestDigest = record.requestDigest,
+                sendStartEpochMillis = record.permit.startedAtEpochMillis,
+                settledAtEpochMillis = record.settledAtEpochMillis,
+            )
+        }
 
     override fun tryStart(
         request: PromptOutputRequest,
@@ -124,7 +150,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
         if (previous.outcome != null)
             return@synchronized if (previous.outcome == outcome)
                 PromptDispatchSettlement.Recorded else PromptDispatchSettlement.Rejected
-        records[identity] = previous.copy(outcome = outcome)
+        records[identity] = previous.copy(outcome = outcome, settledAtEpochMillis = clock.millis())
         PromptDispatchSettlement.Recorded
     }
 }
