@@ -1,5 +1,7 @@
 package net.kigawa.recl.core
 
+import java.time.Clock
+
 /**
  * A token counter must be supplied by the eventual MCP/REST context renderer.
  * The count must include the exact rendered prompt, citation metadata and separators.
@@ -39,6 +41,7 @@ class PinnedContextReader(
     private val storage: ContextStorage,
     private val tokenCounter: ContextTokenCounter,
     private val maxEnumeratedObjects: Int = 10_000,
+    private val clock: Clock = Clock.systemUTC(),
 ) {
     init { require(maxEnumeratedObjects in 1..10_000) }
 
@@ -71,7 +74,7 @@ class PinnedContextReader(
                 ReadResult.Unavailable -> return PinnedContextResult.Unavailable
             }
             if (context.tenantId != principal.tenantId || context.ownerId != principal.id ||
-                context.deleted || !context.pinned || context.status != ContextStatus.CONFIRMED
+                !context.eligibleForAutomaticInjection(clock.millis())
             ) continue
 
             // The global scope belongs to the same tenant: it is not a cross-tenant grant.
@@ -84,6 +87,9 @@ class PinnedContextReader(
                 id = context.id, kind = context.kind, status = context.status,
                 title = context.title, summary = context.summary, content = context.content,
                 scopes = context.scopes.toSet(), contentRevision = context.contentRevision,
+                sensitivity = context.sensitivity,
+                validFromEpochMillis = context.validFromEpochMillis,
+                validUntilEpochMillis = context.validUntilEpochMillis,
             )
             val cost = try { tokenCounter.count(view) } catch (_: Exception) {
                 return PinnedContextResult.Unavailable

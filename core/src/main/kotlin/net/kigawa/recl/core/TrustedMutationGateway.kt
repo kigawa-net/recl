@@ -19,6 +19,9 @@ data class CreateContextMutation(
     val content: String,
     val scopes: Set<String> = emptySet(),
     val pinned: Boolean = false,
+    val sensitivity: Sensitivity = Sensitivity.INTERNAL,
+    val validFromEpochMillis: Long? = null,
+    val validUntilEpochMillis: Long? = null,
 )
 
 data class UpdateContextMutation(
@@ -42,7 +45,9 @@ class TrustedMutationGateway(
     fun create(bearerCredential: String, request: CreateContextMutation): MutationResult {
         val principal = authenticate(bearerCredential) ?: return MutationResult.Forbidden
         if (!validIds(request.contextId, request.requestId) ||
-            request.title.isBlank() || request.scopes.size > 32 || request.scopes.any { it.isBlank() || it.length > 256 }
+            request.title.isBlank() || request.scopes.size > 32 || request.scopes.any { it.isBlank() || it.length > 256 } ||
+            request.sensitivity == Sensitivity.RESTRICTED ||
+            !validInterval(request.validFromEpochMillis, request.validUntilEpochMillis)
         ) return MutationResult.InvalidRequest
 
         val canonical = request.copy(
@@ -65,6 +70,9 @@ class TrustedMutationGateway(
             content = canonical.content,
             scopes = canonical.scopes,
             pinned = canonical.pinned,
+            sensitivity = canonical.sensitivity,
+            validFromEpochMillis = canonical.validFromEpochMillis,
+            validUntilEpochMillis = canonical.validUntilEpochMillis,
         )
         return contextService.create(principal, aggregate, canonical.requestId, digest)
     }
@@ -74,7 +82,9 @@ class TrustedMutationGateway(
         if (!validIds(request.contextId, request.requestId) ||
             request.expectedContentRevision < 1 ||
             (request.patch.scopes?.size ?: 0) > 32 ||
-            request.patch.scopes?.any { it.isBlank() || it.length > 256 } == true
+            request.patch.scopes?.any { it.isBlank() || it.length > 256 } == true ||
+            request.patch.sensitivity == Sensitivity.RESTRICTED ||
+            !validInterval(request.patch.validFromEpochMillis, request.patch.validUntilEpochMillis)
         ) return MutationResult.InvalidRequest
 
         val canonical = request.copy(
@@ -104,6 +114,9 @@ class TrustedMutationGateway(
         return contextService.delete(principal, canonical.contextId, canonical.expectedContentRevision,
             canonical.requestId, digest)
     }
+
+    private fun validInterval(from: Long?, until: Long?): Boolean =
+        from == null || until == null || from < until
 
     private fun authenticate(credential: String): Principal? =
         if (credential.isBlank()) null else authenticator.authenticate(credential)

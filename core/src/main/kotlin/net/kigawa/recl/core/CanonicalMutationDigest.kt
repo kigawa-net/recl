@@ -20,6 +20,9 @@ object CanonicalMutationDigest {
             string("content", command.content)
             scopes("scopes", command.scopes)
             boolean("pinned", command.pinned)
+            string("sensitivity", command.sensitivity.name)
+            long("validFromEpochMillis", command.validFromEpochMillis)
+            long("validUntilEpochMillis", command.validUntilEpochMillis)
         }.sha256()
 
     fun update(principal: Principal, requestId: String, command: UpdateContextMutation): String =
@@ -31,6 +34,9 @@ object CanonicalMutationDigest {
             string("patch.status", command.patch.status?.name)
             optionalScopes("patch.scopes", command.patch.scopes)
             boolean("patch.pinned", command.patch.pinned)
+            string("patch.sensitivity", command.patch.sensitivity?.name)
+            long("patch.validFromEpochMillis", command.patch.validFromEpochMillis)
+            long("patch.validUntilEpochMillis", command.patch.validUntilEpochMillis)
         }.sha256()
 
     fun delete(principal: Principal, requestId: String, command: DeleteContextMutation): String =
@@ -43,7 +49,7 @@ object CanonicalMutationDigest {
         private val data = DataOutputStream(buffer)
 
         init {
-            string("domain", "recl.mutation.v2")
+            string("domain", "recl.mutation.v3")
             string("operation", operation)
             string("tenant", principal.tenantId)
             string("principal", principal.id)

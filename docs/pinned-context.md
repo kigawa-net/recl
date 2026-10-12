@@ -19,7 +19,7 @@ authenticated client
 ## Existing implementation contract
 
 - `ContextAggregate.pinned` defaults to `false`. Create can request an initial pin; update/unpin through `ContextPatch.pinned` is a semantic CAS change and increments `contentRevision`. Index ACK does not change the logical revision.
-- The internal mutation canonical digest now uses **`recl.mutation.v2`** to include the new pinned create/patch fields (version bump is intentional). v1 receipts were never a durable public protocol; any migration to persistent receipt storage must explicitly retain/translate old receipts. This is independent of the proposed external `recl.memory.v1` REST contract.
+- The internal mutation canonical digest now uses **`recl.mutation.v3`** to include pinned fields and the new sensitivity/valid-time create/patch fields (version bump is intentional). v1/v2 receipts were never a durable public protocol; any migration to persistent receipt storage must explicitly retain/translate old receipts. This is independent of the proposed external `recl.memory.v1` REST contract.
 - A new `ContextStorage.enumerateTenant(tenantId,maxItems)` primitive defaults to `Unsupported`; it must return `Complete`, `Unavailable`, or `TooLarge`, not an incomplete prefix as a successful result. The test-only InMemory adapter returns a deterministic, atomically captured snapshot for up to `maxItems` entries.
 - The caller's scope list is a **relevance filter**. Owner and tenant authorization come from the authenticated principal. The `global` scope applies only inside the authenticated tenant, never across tenants. Scopes are currently **exact-match**; hierarchy/prefix semantics are deferred.
 - Only confirmed, pinned, not-tombstoned, owner-authorized contexts are selected. An explicit Direct Get can still retrieve inactive historical records, but automatic pinned injection cannot.
@@ -47,3 +47,7 @@ Scope and security blockers:
 Scope/owner/tenant/status/tombstone filtering, deterministic size and token-budget limits, CAS pin/unpin & request digest replay, missing enumeration capability and over-limit errors, required read failure, scan-to-read owner revocation and tombstone change, authentication failure, and index ACK semantic revision invariance.
 
 The complete production acceptance criteria in recl #26 remain **open**.
+
+
+## Policy update (recl #28)
+The internal Pinned Core now uses a trusted `Clock` to exclude future/expired contexts, and excludes `CONFIDENTIAL` or `RESTRICTED` from automatic injection. The direct authorized Context GET remains available for CONFIDENTIAL history. `validFrom` is inclusive and `validUntil` exclusive. Details: [validity and sensitivity](validity-sensitivity.md).
