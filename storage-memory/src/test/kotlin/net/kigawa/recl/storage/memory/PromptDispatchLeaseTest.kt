@@ -280,4 +280,161 @@ class PromptDispatchLeaseTest {
         // It must NEVER be used for production recovery, where this lost receipt would
         // make a duplicate remote POST possible.
     }
+
+    @Test fun `permit is bound to authoritative GitHub repository and installation generation`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        val expected = PromptGrantEpochBinding.digest(
+            listOf(PromptSourceGrantEpoch(contextId, "src-1", fence))
+        )
+        assertEquals(expected, started.permit.grantEpochDigest)
+        assertEquals(PromptPermitAdmissionDecision.Allowed,
+            journal.check(started.permit, started.contexts))
+    }
+
+    @Test fun `epoch canonicalization sorts source refs and rejects duplicates`() {
+        val a = PromptSourceGrantEpoch(contextId, "src-a", fence)
+        val b = PromptSourceGrantEpoch(contextId, "src-b", fence)
+        assertEquals(PromptGrantEpochBinding.digest(listOf(a, b)),
+            PromptGrantEpochBinding.digest(listOf(b, a)))
+        assertNotEquals(PromptGrantEpochBinding.digest(listOf(a)),
+            PromptGrantEpochBinding.digest(listOf(a.copy(fence = fence.copy(generation = 8)))))
+        assertNotEquals(PromptGrantEpochBinding.digest(listOf(a)),
+            PromptGrantEpochBinding.digest(listOf(a.copy(fence = fence.copy(repositoryId = 43)))))
+        assertNotEquals(PromptGrantEpochBinding.digest(listOf(a)),
+            PromptGrantEpochBinding.digest(listOf(a.copy(fence = fence.copy(installationId = 89)))))
+        assertNotEquals(PromptGrantEpochBinding.digest(listOf(a)),
+            PromptGrantEpochBinding.digest(listOf(a.copy(sourceId = "different"))))
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            PromptGrantEpochBinding.digest(listOf(a, a))
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            PromptGrantEpochBinding.digest(emptyList())
+        }
+    }
+
+    @Test fun `live revocation after permit mint denies test-only send-start admission`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        assertEquals(PromptPermitAdmissionDecision.Allowed,
+            journal.check(started.permit, started.contexts))
+        store.revokeGrantForTestOnly(fence)
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit, started.contexts))
+    }
+
+    @Test fun `regrant under same repository name invalidates old permit epoch`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        store.installGrantForTestOnly(fence.copy(generation = 8, installationId = 89))
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit, started.contexts))
+    }
+
+    @Test fun `altered snapshot or forged permit cannot pass admission`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit.copy(grantEpochDigest = "sha256:" + "f".repeat(64)),
+                started.contexts))
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit, started.contexts.map {
+                it.copy(content = "tampered")
+            }))
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit.copy(destination = destination.copy(model = "other")),
+                started.contexts))
+    }
+
+    @Test fun `Context revision mutation after permit mint blocks send-start`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        val previous = (store.get(principal.tenantId, contextId) as ReadResult.Found).stored
+        assertTrue(store.compareAndSwap(principal.tenantId, contextId,
+            previous.storageRevision,
+            previous.value.copy(content = "mutated", contentRevision = 3)
+        ) is WriteResult.Applied)
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit, started.contexts))
+    }
+
+    @Test fun `missing authority never calls downstream model and preserves send-start receipt`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        var calls = 0
+        val gate = AdmissionCheckedPromptSink(
+            null,
+            TrustedLeaseBoundPromptSink { _, _ ->
+                calls++
+                TrustedPromptSendResult.Accepted
+            }, clock
+        )
+        assertEquals(TrustedPromptSendResult.DefinitelyNotSent,
+            gate.send(started.permit, started.contexts))
+        assertEquals(0, calls)
+        assertEquals(PromptDispatchStartResult.AlreadyRecorded,
+            journal.tryStart(req, PromptDispatchBinding.digest(req)))
+    }
+
+    @Test fun `test-only guarded sink denies revoked grant and forwards valid permit exactly once`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        var calls = 0
+        val gate = AdmissionCheckedPromptSink(journal,
+            TrustedLeaseBoundPromptSink { permit, contents ->
+                assertEquals(started.permit, permit)
+                assertEquals(started.contexts, contents)
+                calls++
+                TrustedPromptSendResult.Accepted
+            }, clock)
+        assertEquals(TrustedPromptSendResult.Accepted,
+            gate.send(started.permit, started.contexts))
+        assertEquals(1, calls)
+        store.revokeGrantForTestOnly(fence)
+        assertEquals(TrustedPromptSendResult.DefinitelyNotSent,
+            gate.send(started.permit, started.contexts))
+        assertEquals(1, calls)
+    }
+
+    @Test fun `expired permit fails before model transport even when grant not yet expired`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        clock.value = clock.value.plusSeconds(3)
+        var calls = 0
+        val gate = AdmissionCheckedPromptSink(journal,
+            TrustedLeaseBoundPromptSink { _, _ ->
+                calls++
+                TrustedPromptSendResult.Accepted
+            }, clock)
+        assertEquals(TrustedPromptSendResult.DefinitelyNotSent,
+            gate.send(started.permit, started.contexts))
+        assertEquals(0, calls)
+    }
+
+    @Test fun `settled permit does not authorize a second network send`() {
+        setup()
+        val req = request()
+        val started = journal.tryStart(req, PromptDispatchBinding.digest(req))
+            as PromptDispatchStartResult.Started
+        assertEquals(PromptDispatchSettlement.Recorded,
+            journal.settle(started.permit, TrustedPromptSendResult.OutcomeUnknown))
+        assertEquals(PromptPermitAdmissionDecision.Denied,
+            journal.check(started.permit, started.contexts))
+    }
 }
