@@ -123,7 +123,7 @@ class PinnedContextReader(
 
         // A second authoritative read and full grant epoch check closes revocations that
         // happened during enumeration/tokenization. It does NOT authorize emitting the
-        // snapshots indefinitely after this method returns: see Prompt Output Barrier #55.
+        // snapshots indefinitely after this method returns: see Prompt Output Barrier issue #56.
         if (requireReadAdmission) {
             for (original in selectedRecords) {
                 val latest = when (val result = storage.get(principal.tenantId, original.id)) {
