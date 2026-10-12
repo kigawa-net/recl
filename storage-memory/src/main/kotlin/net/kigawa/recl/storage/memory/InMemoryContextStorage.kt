@@ -48,5 +48,6 @@ class InMemoryContextStorage : ContextStorage {
     private fun snapshot(value: ContextAggregate): ContextAggregate = value.copy(
         scopes = value.scopes.toSet(),
         operationReceipts = value.operationReceipts.toList(),
+        sources = value.sources.toList(),
     )
 }

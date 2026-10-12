@@ -90,6 +90,7 @@ class PinnedContextReader(
                 sensitivity = context.sensitivity,
                 validFromEpochMillis = context.validFromEpochMillis,
                 validUntilEpochMillis = context.validUntilEpochMillis,
+                sources = context.sources.toList(),
             )
             val cost = try { tokenCounter.count(view) } catch (_: Exception) {
                 return PinnedContextResult.Unavailable

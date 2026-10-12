@@ -34,6 +34,8 @@ data class ContextAggregate(
     val validFromEpochMillis: Long? = null,
     /** Exclusive UTC Unix epoch milliseconds. */
     val validUntilEpochMillis: Long? = null,
+    /** Citation metadata is authoritative only as a record of what the client submitted. */
+    val sources: List<ContextSource> = emptyList(),
     val contentRevision: Long = 1,
     val indexedContentRevision: Long = 0,
     val indexAction: IndexAction = IndexAction.UPSERT,
@@ -44,6 +46,13 @@ data class ContextAggregate(
         require(tenantId.isNotBlank() && id.isNotBlank() && ownerId.isNotBlank())
         require(contentRevision >= 1 && indexedContentRevision in 0..contentRevision)
         require(operationReceipts.size <= MAX_RECEIPTS)
+        require(sources.size <= SourceReferencePolicy.MAX_PER_CONTEXT)
+        require(sources.map { it.sourceId }.distinct().size == sources.size)
+        require(status != ContextStatus.CONFIRMED ||
+            sources.none { it.trust == SourceTrust.AGENT_INFERRED &&
+                it.verification != VerificationState.VERIFIED }) {
+            "unverified agent inference cannot be confirmed"
+        }
         require(sensitivity != Sensitivity.RESTRICTED) { "RESTRICTED Context bodies cannot be persisted" }
         require(validFromEpochMillis == null || validUntilEpochMillis == null ||
             validFromEpochMillis < validUntilEpochMillis) { "validity interval must be nonempty" }
@@ -56,7 +65,10 @@ data class ContextAggregate(
     /** Automatic injection is stricter than explicit owner-authorized Direct Get. */
     fun eligibleForAutomaticInjection(nowEpochMillis: Long): Boolean =
         pinned && !deleted && status == ContextStatus.CONFIRMED &&
-        sensitivity in setOf(Sensitivity.PUBLIC, Sensitivity.INTERNAL) && isValidAt(nowEpochMillis)
+        sensitivity in setOf(Sensitivity.PUBLIC, Sensitivity.INTERNAL) && isValidAt(nowEpochMillis) &&
+        // Unverified primary/agent evidence is not promoted to a confirmed prompt assertion.
+        sources.all { it.trust == SourceTrust.USER_STATED ||
+            it.verification == VerificationState.VERIFIED }
 
     companion object { const val MAX_RECEIPTS = 32 }
 }
@@ -71,6 +83,8 @@ data class ContextPatch(
     val sensitivity: Sensitivity? = null,
     val validFromEpochMillis: Long? = null,
     val validUntilEpochMillis: Long? = null,
+    /** null: unchanged, empty: clear, nonempty: replace all source citations. */
+    val sources: List<SourceSubmission>? = null,
 ) {
     fun applyTo(context: ContextAggregate): ContextAggregate = context.copy(
         title = title ?: context.title,
@@ -82,5 +96,7 @@ data class ContextPatch(
         sensitivity = sensitivity ?: context.sensitivity,
         validFromEpochMillis = validFromEpochMillis ?: context.validFromEpochMillis,
         validUntilEpochMillis = validUntilEpochMillis ?: context.validUntilEpochMillis,
+        sources = sources?.let { SourceReferencePolicy.normalizeMany(it).map { source -> source.unverified() } }
+            ?: context.sources,
     )
 }
