@@ -15,7 +15,7 @@ This document specifies the input boundary proposed in [#20](https://github.com/
 A digest is SHA-256 over a custom versioned, domain-separated binary envelope; **never** accept a client-supplied digest.
 
 ```text
-string("domain", "recl.mutation.v1")
+string("domain", "recl.mutation.v2")
 string("operation", create|update|delete)
 string("tenant", authenticatedTenantId)
 string("principal", authenticatedPrincipalId)
@@ -28,7 +28,7 @@ The `string`/optional long/optional set encoders write a fixed field name follow
 
 `null` (unspecified PATCH field) and `""` (explicit empty PATCH field) receive different digests. Kotlin's current `ContextPatch` does **not** support explicit JSON `null` field-clearing: REST/MCP DTOs must define whether such requests are rejected or require a separate operation.
 
-The digest binds the operation, target, revision and submitted fields. It is an **identity checksum**, not a signature. It does not authenticate a request or grant permissions.
+The digest binds the operation, target, revision and submitted fields. Version 2 additionally binds `pinned` on create and optional `patch.pinned` on update. The encoder version was advanced from `recl.mutation.v1` because changing a request digest while reusing the same domain version would invalidate stored replay receipts. Fortis durable receipt migration must explicitly account for previous versions. It is an **identity checksum**, not a signature. It does not authenticate a request or grant permissions.
 
 ## Idempotency and errors
 
@@ -46,7 +46,7 @@ The digest binds the operation, target, revision and submitted fields. It is an 
 - Versioned REST/MCP DTO schema and formal canonical encoder compatibility tests across different language clients.
 - Fortis durable request receipt persistence, recovery, CAS and idempotent request-result lookup under [#14](https://github.com/kigawa-net/recl/issues/14).
 - Bounded receipt retention / expiration, request-replay window policy, no silent deletion of proof.
-- Scope ownership and authorization for search/pinned Context.
+- Scope ownership and authorization for search/pinned Context. An internal owner-scoped Pinned reader exists in the test-only Core and requires an authoritative complete scan; production Fortis enumeration and token budget verification remain blocked (#26 / Fortis #45).
 - [Kivra contract compatibility #21](https://github.com/kigawa-net/recl/issues/21): this gateway does not make the provider API operational.
 
 This is an internal API hardening step, **not** evidence that recl's production REST/MCP service or Fortis Adapter exists.
