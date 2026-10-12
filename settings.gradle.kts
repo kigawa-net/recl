@@ -7,4 +7,4 @@ pluginManagement {
     }
 }
 
-include(":core", ":storage-memory", ":app")
+include(":core", ":storage-memory", ":app", ":source-github")
