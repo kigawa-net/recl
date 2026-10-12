@@ -11,11 +11,18 @@ import java.time.Clock
  */
 object PromptDispatchBinding {
     fun digest(request: PromptOutputRequest): String {
+        require(request.selection.contexts.size <= 100 &&
+            request.query.scopes.size <= 32 &&
+            request.query.maxContexts in 1..100 &&
+            request.query.tokenBudget in 1..100_000
+        ) { "oversize prompt request" }
         val output = ByteArrayOutputStream()
         DataOutputStream(output).use { out ->
             fun put(value: String) {
                 val bytes = value.toByteArray(Charsets.UTF_8)
-                require(bytes.size <= 2_000_000) { "oversize binding field" }
+                require(bytes.size <= 1_000_000 &&
+                    output.size().toLong() + bytes.size + 4L <= 4_000_000L
+                ) { "oversize binding payload" }
                 out.writeInt(bytes.size)
                 out.write(bytes)
             }
@@ -171,6 +178,8 @@ class TrustedPromptLeaseDispatcher(
             permit.requestDigest != digest ||
             begun.contexts != request.selection.contexts
         ) return PromptOutputResult.OutcomeUnknown
+        if (permit.startedAtEpochMillis > clock.millis())
+            return PromptOutputResult.OutcomeUnknown
         val outcome = if (clock.millis() >= permit.expiresAtEpochMillis) {
             // The trusted transport was never called; record this exact no-send outcome.
             TrustedPromptSendResult.DefinitelyNotSent
