@@ -18,7 +18,7 @@ Source types align with Kivra's memory module:
 | USER_MESSAGE | `conversation://{conversationId}/{messageId}` | Not proof the user made a particular claim |
 | URL | `https://{public-host}/{safe/path}` | No query/fragment/userinfo/custom ports; no network fetch in Core |
 
-URI syntax is deliberately restrictive: raw percent escapes, userinfo, queries, fragments, path traversal, and credential-like path segments are rejected. This avoids accidentally persisting query tokens or presigned URLs. File references use immutable Git SHA rather than a host filesystem path. The lightweight host checks are **not** SSRF protection: any future URL fetcher must independently enforce DNS/IP validation on every redirect, network egress, TLS and time/byte limits.
+URI syntax is deliberately restrictive: raw percent escapes, userinfo, queries, fragments, path traversal, and credential-like path segments are rejected. This avoids accidentally persisting query tokens or presigned URLs. File references use immutable Git SHA rather than a host filesystem path. URLs require public-looking DNS hostnames (numeric IP literals are disallowed). These conservative input checks are **not** SSRF protection: any future URL fetcher must independently enforce DNS/IP validation on every redirect, network egress, TLS and time/byte limits.
 
 A `SourceSubmission` is client-originated and has **no verification field**. The TrustedMutationGateway normalizes/validates at most 16 sources per Context, enforces unique IDs and returns typed `InvalidRequest` on invalid references. The conversion to `ContextSource` always starts as `UNVERIFIED`. Even a user-supplied `PRIMARY_SOURCE` claim is not equivalent to server verification.
 

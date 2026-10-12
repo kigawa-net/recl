@@ -133,6 +133,11 @@ object SourceReferencePolicy {
             }
             SourceType.URL -> {
                 require(scheme == "https")
+                // Store only public DNS names, never literal IPv4/IPv6 targets.
+                require(Regex("[a-z0-9-]+(\\\\.[a-z0-9-]+)+").matches(host) &&
+                    host.substringAfterLast('.').any { it in 'a'..'z' }) {
+                    "URL host must be a public DNS name, not an IP literal"
+                }
                 require(host != "localhost" && !host.endsWith(".localhost") &&
                     !host.endsWith(".local") && !host.endsWith(".internal") &&
                     !host.endsWith(".test") && !host.endsWith(".invalid")) { "private host" }

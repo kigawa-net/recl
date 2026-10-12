@@ -77,6 +77,8 @@ class ContextSourceProvenanceTest {
             "https://example.com/a/../secret",
             "https://localhost/internal",
             "https://192.168.1.3/internal",
+            "https://172.16.0.3/internal",
+            "https://[::1]/internal",
             "https://example.com:8443/report",
             "https://example.com/" + "x".repeat(2100),
         )
