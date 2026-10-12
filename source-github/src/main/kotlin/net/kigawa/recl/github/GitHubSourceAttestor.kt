@@ -189,6 +189,10 @@ class GitHubSourceAttestor(
         if (!allowed) return SourceAttestationResult.Unavailable
         // Fence-capable credentials and grant should reference the SAME authority.
         val fenceSource = grants as? GitHubGrantFenceProvider
+        // In fenced mode a separate credential provider could mint a token from
+        // a different installation than the authoritative grant. Forbid miswiring.
+        if (fenceSource != null && grants !== credentials)
+            return SourceAttestationResult.Unavailable
         val initialFence = if (fenceSource != null) {
             try { fenceSource.acquireFence(scope, target.repository) }
                 catch (_: Exception) { null }

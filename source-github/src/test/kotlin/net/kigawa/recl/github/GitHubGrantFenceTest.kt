@@ -77,4 +77,22 @@ class GitHubGrantFenceTest {
         val result = attest(GitHubDocumentReader { _, _ -> GitHubReadResult.Success(bytes) })
         assertEquals(SourceAttestationResult.Unavailable, result)
     }
+
+    @Test fun `fenced grant cannot be paired with an unrelated credential authority`() {
+        val authoritative = access()
+        var contacted = false
+        val result = GitHubSourceAttestor(
+            authoritative,
+            GitHubInstallationCredentials { _, _ ->
+                GitHubInstallationToken("unrelated-installation", millis + 600_000)
+            },
+            GitHubDocumentReader { _, _ ->
+                contacted = true
+                GitHubReadResult.Success(bytes)
+            },
+            "recl-source-verifier", clock,
+        ).attest(scope, src)
+        assertEquals(SourceAttestationResult.Unavailable, result)
+        assertTrue(!contacted)
+    }
 }
