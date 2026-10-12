@@ -2,7 +2,7 @@
 
 recl is a **development context repository** for coding agents. It stores durable project decisions, architecture, constraints, findings, and provenance so that agents such as Claude Code can retrieve the relevant context across sessions.
 
-> **Status: design / bootstrap.** The repository currently has no production-ready implementation. The Fortis Storage Adapter, MCP server, and Qdrant indexer are planned, not shipped.
+> **Status: initial Core implementation / bootstrap.** The repository does not yet provide a production-ready service. The Fortis Storage Adapter, MCP server, and Qdrant indexer are planned, not shipped.
 
 ## Architecture
 
@@ -73,4 +73,10 @@ See [the implementation design](docs/design.md) for key layout, write/read proto
 
 ## Development
 
-Implementation language, build commands, and package layout will be specified in a dedicated bootstrap design. **Do not assume the current repository is buildable** until bootstrap tooling and automated tests have been committed.
+The initial bootstrap uses **Kotlin/JVM 21**, Gradle 8.14.3, and three modules: `:core`, `:storage-memory`, and `:app`.
+
+Install Gradle 8.14.3 and JDK 21, then run `gradle test`. The GitHub Actions Kotlin CI workflow runs this command on pull requests. A Gradle Wrapper is **not yet committed**; follow [bootstrap issue #18](https://github.com/kigawa-net/recl/issues/18) for that work.
+
+The executable app is currently a **fail-closed placeholder**, not an MCP/REST server. `:storage-memory` is a test adapter only. Fortis, Qdrant, and Claude Code MCP integration are not yet implemented.
+
+See [bootstrap notes](docs/bootstrap.md) and [architecture design](docs/design.md).
