@@ -24,11 +24,14 @@ fun interface GitHubRepositoryGrant {
     fun canRead(scope: SourceVerificationScope, repository: GitHubRepository): Boolean
 }
 
-data class GitHubInstallationToken(val value: String, val expiresAtEpochMillis: Long) {
+class GitHubInstallationToken(val value: String, val expiresAtEpochMillis: Long) {
     init {
         require(value.isNotBlank() && !value.any { it.isISOControl() })
         require(expiresAtEpochMillis > 0)
     }
+
+    override fun toString(): String =
+        "GitHubInstallationToken(value=[REDACTED], expiresAtEpochMillis=$expiresAtEpochMillis)"
 }
 fun interface GitHubInstallationCredentials {
     fun getToken(scope: SourceVerificationScope, repository: GitHubRepository): GitHubInstallationToken?
@@ -188,6 +191,13 @@ class GitHubSourceAttestor(
             catch (_: Exception) { GitHubReadResult.Unavailable }
         when (response) {
             is GitHubReadResult.Success -> {
+                // A grant may be revoked while awaiting GitHub. Check the authoritative
+                // grant ledger a second time before producing any Verified evidence.
+                val stillAllowed = try { grants.canRead(scope, target.repository) }
+                    catch (_: Exception) { false }
+                if (!stillAllowed) return SourceAttestationResult.Unavailable
+                if (token.expiresAtEpochMillis <= clock.millis() + 30_000)
+                    return SourceAttestationResult.Unavailable
                 val projection = GitHubEvidenceDigest.fromResponse(target, response.body)
                     ?: return SourceAttestationResult.Unavailable
                 if (projection.contentDigest != source.contentDigest) {

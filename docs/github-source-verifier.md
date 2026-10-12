@@ -67,3 +67,10 @@ This project uses GitHub Actions with Gradle 8.14.3 and JDK 21. The module uses 
 - [ ] Define Kivra `recl.memory.v1` mapping and execute cross-repository live contract tests (recl #21, Kivra #71).
 
 **Passing fake HTTP/Grant tests validates only the adapter's internal contract. It does not enable production `sourceVerificationV1`.**
+
+
+## GitHub App installation protocol (recl #37)
+
+The internal `GitHubAppSigningIdentity`/ `GitHubRestInstallationTokenIssuer` can sign an RS256 GitHub App JWT and request a single-repository Installation Token from GitHub's fixed API with read-only permissions. `AuthoritativeGitHubAppAccess` checks a server-owned `GitHubInstallationGrantLedger` before and after issuance; `GitHubSourceAttestor` rechecks repository authorization after remote reads. Tokens are redacted from `toString()`.
+
+This is still only an internal **protocol with Fake Grant Ledger/HTTP contract tests**. No real GitHub App key broker, live repository grant table, revocation fence or deployed credential rotation has been implemented. [Issue #39](https://github.com/kigawa-net/recl/issues/39) tracks the remaining revocation race between the final grant check and the Context's Fortis CAS. See [github-installation-broker.md](github-installation-broker.md). Production remains Disabled.
