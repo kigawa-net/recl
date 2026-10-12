@@ -10,10 +10,13 @@ import net.kigawa.recl.core.SourceGrantFence
 import net.kigawa.recl.core.GrantFencedContextCommit
 import net.kigawa.recl.core.GrantFencedWriteResult
 import net.kigawa.recl.core.VerificationState
+import net.kigawa.recl.core.TrustedGrantEpochReader
+import net.kigawa.recl.core.GrantEpochReadResult
+import net.kigawa.recl.core.Principal
 import java.time.Clock
 
 /** Ephemeral, JVM-only test adapter. NEVER use as a production failover. */
-class InMemoryContextStorage(private val clock: Clock = Clock.systemUTC()) : ContextStorage, GrantFencedContextCommit {
+class InMemoryContextStorage(private val clock: Clock = Clock.systemUTC()) : ContextStorage, GrantFencedContextCommit, TrustedGrantEpochReader {
     private val lock = Any()
     private val data = mutableMapOf<Pair<String, String>, StoredContext>()
     private data class GrantState(val fence: SourceGrantFence, val revoked: Boolean)
@@ -34,6 +37,19 @@ class InMemoryContextStorage(private val clock: Clock = Clock.systemUTC()) : Con
         val old = grantStates[key] ?: return@synchronized
         grantStates[key] = old.copy(revoked = true)
     }
+
+    /** Test-only linearizable observation, protected by the same local lock as revocation. */
+    override fun check(principal: Principal, expected: SourceGrantFence): GrantEpochReadResult =
+        synchronized(lock) {
+            if (principal.tenantId != expected.tenantId || principal.id != expected.ownerId ||
+                expected.expiresAtEpochMillis <= clock.millis()
+            ) return@synchronized GrantEpochReadResult.RevokedOrChanged
+            val state = grantStates[Triple(expected.tenantId, expected.ownerId, expected.repositoryId)]
+                ?: return@synchronized GrantEpochReadResult.RevokedOrChanged
+            if (state.revoked || state.fence != expected)
+                GrantEpochReadResult.RevokedOrChanged
+            else GrantEpochReadResult.Current
+        }
 
     /** Both grant and Context checks occur under the SAME test-local lock. NEVER a production adapter. */
     override fun compareAndSwapWithGrant(

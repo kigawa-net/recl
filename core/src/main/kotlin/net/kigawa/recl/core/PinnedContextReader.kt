@@ -42,6 +42,9 @@ class PinnedContextReader(
     private val tokenCounter: ContextTokenCounter,
     private val maxEnumeratedObjects: Int = 10_000,
     private val clock: Clock = Clock.systemUTC(),
+    /** Real production callers must supply a live, authoritative repo/ACL admission port. */
+    private val readAdmission: TrustedPinnedReadAdmission? = null,
+    private val requireReadAdmission: Boolean = false,
 ) {
     init { require(maxEnumeratedObjects in 1..10_000) }
 
@@ -51,6 +54,7 @@ class PinnedContextReader(
             query.scopes.size > 32 ||
             query.scopes.any { it.isBlank() || it.length > 256 }
         ) return PinnedContextResult.InvalidRequest
+        if (requireReadAdmission && readAdmission == null) return PinnedContextResult.Unsupported
 
         val enumeration = when (val result = storage.enumerateTenant(principal.tenantId, maxEnumeratedObjects)) {
             is EnumerationResult.Complete -> result.contexts
@@ -64,6 +68,8 @@ class PinnedContextReader(
         if (ids.distinct().size != ids.size) return PinnedContextResult.Unavailable
 
         val selected = ArrayList<ContextSnapshot>()
+        // Raw authoritative records are retained only for a final consistency/admission pass.
+        val selectedRecords = ArrayList<ContextAggregate>()
         var used = 0
         var limited = false
         // A deterministic traversal ensures stable selection when the authoritative state is unchanged.
@@ -83,6 +89,16 @@ class PinnedContextReader(
                 context.scopes.none { it in query.scopes }
             ) continue
 
+            if (requireReadAdmission) {
+                when (try { readAdmission!!.check(principal, context, clock.millis()) }
+                    catch (_: Exception) { ReadAdmissionDecision.Unavailable }) {
+                    ReadAdmissionDecision.Allowed -> Unit
+                    ReadAdmissionDecision.Denied -> continue
+                    ReadAdmissionDecision.Unsupported -> return PinnedContextResult.Unsupported
+                    ReadAdmissionDecision.Unavailable -> return PinnedContextResult.Unavailable
+                }
+            }
+
             val view = ContextSnapshot(
                 id = context.id, kind = context.kind, status = context.status,
                 title = context.title, summary = context.summary, content = context.content,
@@ -101,7 +117,35 @@ class PinnedContextReader(
                 continue
             }
             selected += view
+            if (requireReadAdmission) selectedRecords += context
             used += cost
+        }
+
+        // A second authoritative read and full grant epoch check closes revocations that
+        // happened during enumeration/tokenization. It does NOT authorize emitting the
+        // snapshots indefinitely after this method returns: see Prompt Output Barrier #55.
+        if (requireReadAdmission) {
+            for (original in selectedRecords) {
+                val latest = when (val result = storage.get(principal.tenantId, original.id)) {
+                    is ReadResult.Found -> result.stored.value
+                    ReadResult.NotFound -> return PinnedContextResult.Unavailable
+                    ReadResult.Unavailable -> return PinnedContextResult.Unavailable
+                }
+                if (latest != original ||
+                    latest.ownerId != principal.id ||
+                    !latest.eligibleForAutomaticInjection(clock.millis()) ||
+                    (query.scopes.isNotEmpty() &&
+                        "global" !in latest.scopes &&
+                        latest.scopes.none { it in query.scopes })
+                ) return PinnedContextResult.Unavailable
+                when (try { readAdmission!!.check(principal, latest, clock.millis()) }
+                    catch (_: Exception) { ReadAdmissionDecision.Unavailable }) {
+                    ReadAdmissionDecision.Allowed -> Unit
+                    ReadAdmissionDecision.Denied -> return PinnedContextResult.Unavailable
+                    ReadAdmissionDecision.Unsupported -> return PinnedContextResult.Unsupported
+                    ReadAdmissionDecision.Unavailable -> return PinnedContextResult.Unavailable
+                }
+            }
         }
         return PinnedContextResult.Found(selected, used, limited)
     }
