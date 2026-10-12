@@ -1,7 +1,5 @@
 package net.kigawa.recl.core
 
-import java.util.Locale
-
 /** The future transport adapter supplies a bearer credential, not self-reported Principal claims.
  * An implementation MUST verify issuer, audience, expiry, subject and tenant grants.
  * No authenticator is shipped with the Core bootstrap.
@@ -109,11 +107,8 @@ class TrustedMutationGateway(
         if (credential.isBlank()) null else authenticator.authenticate(credential)
 
     private fun validIds(contextId: String, requestId: String) =
-        UUID_V7.matches(contextId) && UUID_V7.matches(requestId)
+        ContextIds.isUuidV7(contextId) && ContextIds.isUuidV7(requestId)
 
-    private fun canonicalId(id: String): String = id.lowercase(Locale.ROOT)
+    private fun canonicalId(id: String): String = ContextIds.canonicalUuidV7(id) ?: error("invalid id")
 
-    private companion object {
-        val UUID_V7 = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
-    }
 }
