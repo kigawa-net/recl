@@ -94,6 +94,23 @@ class InMemoryPromptSendStartJournalForTestOnly(
                         result = PromptDispatchStartResult.Unsupported
                         TrustedPromptSendResult.DefinitelyNotSent
                     } else {
+                        // Server-derived Grant epoch is bound separately from the public
+                        // ContextSnapshot digest. This call executes under test Context lock.
+                        val grantRefs = contexts.flatMap { snapshot ->
+                            val raw = (storage.get(request.principal.tenantId, snapshot.id)
+                                as? ReadResult.Found)?.stored?.value
+                            raw?.sources?.mapNotNull { source ->
+                                source.evidence?.sourceGrantFence?.let { fence ->
+                                    PromptSourceGrantEpoch(snapshot.id, source.sourceId, fence)
+                                }
+                            } ?: emptyList()
+                        }
+                        if (grantRefs.isEmpty() ||
+                            grantRefs.size != contexts.sumOf { it.sources.size }
+                        ) {
+                            result = PromptDispatchStartResult.Forbidden
+                            TrustedPromptSendResult.DefinitelyNotSent
+                        } else {
                         val now = clock.millis()
                         // Trusted evidence/grants may expire before the intended lease.
                         val proofExpiry = contexts.minOfOrNull { snapshot ->
@@ -119,6 +136,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
                                 principalId = request.principal.id,
                                 destination = request.destination,
                                 requestDigest = requestDigest,
+                                grantEpochDigest = PromptGrantEpochBinding.digest(grantRefs),
                                 startedAtEpochMillis = now,
                                 expiresAtEpochMillis = expires,
                             )
@@ -131,6 +149,7 @@ class InMemoryPromptSendStartJournalForTestOnly(
                             // Represents a durable logical send-start INTENT in this test
                             // model, NOT that a remote model has received anything.
                             TrustedPromptSendResult.Accepted
+                        }
                         }
                     }
                 }
