@@ -11,14 +11,25 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import net.kigawa.recl.core.ContextAggregate
+import net.kigawa.recl.core.ContextKind
 import net.kigawa.recl.core.ContextReader
 import net.kigawa.recl.core.ContextService
+import net.kigawa.recl.core.ContextSource
+import net.kigawa.recl.core.ContextStatus
 import net.kigawa.recl.core.ContextStorage
+import net.kigawa.recl.core.ContextTokenCounter
+import net.kigawa.recl.core.EnumerationResult
+import net.kigawa.recl.core.PinnedContextReader
 import net.kigawa.recl.core.Principal
 import net.kigawa.recl.core.ReadResult
+import net.kigawa.recl.core.Sensitivity
 import net.kigawa.recl.core.SessionAuthenticator
+import net.kigawa.recl.core.SourceTrust
+import net.kigawa.recl.core.SourceType
+import net.kigawa.recl.core.VerificationState
 import net.kigawa.recl.core.WriteResult
 import net.kigawa.recl.storage.memory.InMemoryContextStorage
 import org.junit.jupiter.api.AfterEach
@@ -65,14 +76,19 @@ class ContextRestApiTest {
 
     @BeforeEach
     fun startServer() {
-        val api = ContextRestApi(ContextService(faulty), ContextReader(faulty), authenticator)
-        server = startContextRestServer(api, InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
-        port = server.address.port
+        startWith(PinnedContextReader(memory, contentLengthTokens))
     }
 
     @AfterEach
     fun stopServer() {
         server.stop(0)
+    }
+
+    private fun startWith(pinned: PinnedContextReader) {
+        if (::server.isInitialized) server.stop(0)
+        val api = ContextRestApi(ContextService(faulty), ContextReader(faulty), authenticator, pinned)
+        server = startContextRestServer(api, InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
+        port = server.address.port
     }
 
     // ---- CRUD -------------------------------------------------------------------------------
@@ -382,11 +398,278 @@ class ContextRestApiTest {
         assertEquals(3L, call("GET", "/contexts/$contextId").num("contentRevision"))
     }
 
+    // ---- pinned retrieval (GET /contexts/pinned) --------------------------------------------
+
+    private val contentLengthTokens = ContextTokenCounter { it.content.length }
+    private val futureMillis = 4_102_444_800_000L // 2100-01-01T00:00:00Z
+    private val pastMillis = 1_000L
+
+    private fun seedId(n: Int) = "019a1a2b-3c4d-7e8f-8a9b-1c2d3e4f7a%02x".format(n)
+
+    private fun seed(
+        n: Int,
+        tenant: String = "tenant-a",
+        owner: String = "owner",
+        scopes: Set<String> = setOf("project:recl"),
+        pinned: Boolean = true,
+        status: ContextStatus = ContextStatus.CONFIRMED,
+        sensitivity: Sensitivity = Sensitivity.INTERNAL,
+        validFrom: Long? = null,
+        validUntil: Long? = null,
+        sources: List<ContextSource> = emptyList(),
+        deleted: Boolean = false,
+        content: String = "0123456789",
+    ) {
+        val context = ContextAggregate(
+            tenantId = tenant, id = seedId(n), ownerId = owner,
+            kind = ContextKind.DECISION, status = status,
+            title = "T$n", summary = "S$n", content = content,
+            scopes = scopes, pinned = pinned, sensitivity = sensitivity,
+            validFromEpochMillis = validFrom, validUntilEpochMillis = validUntil,
+            sources = sources, deleted = deleted,
+        )
+        assertTrue(memory.createIfAbsent(context) is WriteResult.Applied, "seed $n")
+    }
+
+    private fun pinnedPath(vararg query: String) =
+        "/contexts/pinned" + if (query.isEmpty()) "" else "?" + query.joinToString("&")
+
+    @Test
+    fun `pinned list returns confirmed pinned owner contexts in id order with usedTokens and limited`() {
+        seed(3, content = "cccc")
+        seed(1, content = "aaaa")
+        seed(2, content = "bbbb")
+
+        val response = call("GET", pinnedPath("tokenBudget=100", "maxContexts=10"))
+        assertEquals(200, response.status)
+        assertEquals(listOf(seedId(1), seedId(2), seedId(3)), response.contexts().map { it.str("id") })
+        assertEquals(12L, response.num("usedTokens"))
+        assertEquals(false, response.json["limited"]!!.jsonPrimitive.boolean)
+
+        val first = response.contexts()[0]
+        assertEquals("T1", first.str("title"))
+        assertEquals("decision", first.str("kind"))
+        assertEquals("confirmed", first.str("status"))
+        assertEquals("internal", first.str("sensitivity"))
+        assertEquals(listOf("project:recl"), first.json["scopes"]!!.jsonArray.map { it.jsonPrimitive.content })
+        for (internal in listOf("tenantId", "ownerId", "pinned", "sources", "storageRevision", "operationReceipts")) {
+            assertFalse(first.json.containsKey(internal), "response must not expose $internal")
+        }
+    }
+
+    @Test
+    fun `scope is a relevance filter and global scope is included for every requested scope`() {
+        seed(1, scopes = setOf("project:recl"))
+        seed(2, scopes = setOf("project:other"))
+        seed(3, scopes = setOf("global"))
+        seed(4, scopes = setOf("project:recl", "project:other"))
+
+        val recl = call("GET", pinnedPath("scope=project:recl", "tokenBudget=100", "maxContexts=10"))
+        assertEquals(listOf(seedId(1), seedId(3), seedId(4)), recl.contexts().map { it.str("id") })
+
+        val repeated = call("GET", pinnedPath("scope=project:other", "scope=project:recl", "tokenBudget=100", "maxContexts=10"))
+        assertEquals(listOf(seedId(1), seedId(2), seedId(3), seedId(4)), repeated.contexts().map { it.str("id") })
+
+        val unmatched = call("GET", pinnedPath("scope=project:none", "tokenBudget=100", "maxContexts=10"))
+        assertEquals(listOf(seedId(3)), unmatched.contexts().map { it.str("id") })
+    }
+
+    @Test
+    fun `other owners and other tenants never appear in the owner's pinned result`() {
+        seed(1)
+        seed(2, owner = "outsider")
+        seed(3, tenant = "tenant-b")
+
+        assertEquals(listOf(seedId(1)), call("GET", pinnedPath("tokenBudget=100", "maxContexts=10"))
+            .contexts().map { it.str("id") })
+        assertEquals(listOf(seedId(2)), call("GET", pinnedPath("tokenBudget=100", "maxContexts=10"), token = sameTenantOtherToken)
+            .contexts().map { it.str("id") })
+        assertEquals(listOf(seedId(3)), call("GET", pinnedPath("tokenBudget=100", "maxContexts=10"), token = otherTenantToken)
+            .contexts().map { it.str("id") })
+    }
+
+    @Test
+    fun `contexts that are not eligible for automatic injection never appear`() {
+        seed(1) // eligible control
+        seed(2, pinned = false)
+        seed(3, status = ContextStatus.PROPOSED)
+        seed(4, status = ContextStatus.ARCHIVED)
+        seed(5, sensitivity = Sensitivity.CONFIDENTIAL)
+        seed(6, validUntil = pastMillis)
+        seed(7, validFrom = futureMillis)
+        seed(8, deleted = true)
+        seed(9, sources = listOf(ContextSource(
+            sourceId = "src-1", type = SourceType.URL, uri = "https://example.com/spec",
+            locator = null, retrievedAtEpochMillis = null, contentDigest = null,
+            trust = SourceTrust.USER_STATED, verification = VerificationState.UNVERIFIED,
+        )))
+
+        val response = call("GET", pinnedPath("tokenBudget=1000", "maxContexts=100"))
+        assertEquals(200, response.status)
+        assertEquals(listOf(seedId(1)), response.contexts().map { it.str("id") })
+    }
+
+    @Test
+    fun `token budget and maxContexts limit the result and report limited`() {
+        seed(1, content = "0123456789")
+        seed(2, content = "0123456789")
+        seed(3, content = "0123456789")
+
+        val byBudget = call("GET", pinnedPath("tokenBudget=25", "maxContexts=10"))
+        assertEquals(200, byBudget.status)
+        assertEquals(listOf(seedId(1), seedId(2)), byBudget.contexts().map { it.str("id") })
+        assertEquals(20L, byBudget.num("usedTokens"))
+        assertEquals(true, byBudget.json["limited"]!!.jsonPrimitive.boolean)
+
+        val byCount = call("GET", pinnedPath("tokenBudget=1000", "maxContexts=1"))
+        assertEquals(listOf(seedId(1)), byCount.contexts().map { it.str("id") })
+        assertEquals(10L, byCount.num("usedTokens"))
+        assertEquals(true, byCount.json["limited"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun `pinned list without a verified bearer is 401 and returns no contexts`() {
+        seed(1)
+        val query = listOf("tokenBudget=100", "maxContexts=10")
+        val missing = call("GET", pinnedPath(*query.toTypedArray()), token = null)
+        assertEquals(401, missing.status)
+        assertEquals("UNAUTHENTICATED", missing.str("error"))
+        assertEquals("Bearer", missing.headers.firstValue("WWW-Authenticate").orElse(null))
+        assertEquals(401, call("GET", pinnedPath(*query.toTypedArray()), token = "forged").status)
+        assertEquals(401, call("GET", pinnedPath(*query.toTypedArray()), token = null,
+            headers = mapOf("Authorization" to "Basic dXNlcjpwYXNz")).status)
+    }
+
+    @Test
+    fun `client-supplied owner or tenant parameters are rejected with 400`() {
+        seed(1)
+        for (name in listOf("tenantId", "ownerId", "principal", "owner", "tenant")) {
+            val response = call("GET", pinnedPath("tokenBudget=100", "maxContexts=10", "$name=tenant-b"))
+            assertEquals(400, response.status, name)
+            assertEquals("INVALID_FIELD", response.str("error"), name)
+        }
+    }
+
+    @Test
+    fun `invalid pinned query parameters are rejected with 400`() {
+        val invalid = listOf(
+            "maxContexts=10", // tokenBudget missing
+            "tokenBudget=100", // maxContexts missing
+            "tokenBudget=0&maxContexts=10",
+            "tokenBudget=100001&maxContexts=10",
+            "tokenBudget=-5&maxContexts=10",
+            "tokenBudget=5x&maxContexts=10",
+            "tokenBudget=100&maxContexts=0",
+            "tokenBudget=100&maxContexts=101",
+            "tokenBudget=100&maxContexts=abc",
+            "tokenBudget=100&tokenBudget=200&maxContexts=10",
+            "tokenBudget=100&maxContexts=10&maxContexts=10",
+            "tokenBudget=100&maxContexts=10&scope=",
+            "tokenBudget=100&maxContexts=10&scope=%20%20",
+            "tokenBudget=100&maxContexts=10&scope=" + "x".repeat(257),
+            "tokenBudget=100&maxContexts=10&unknown=1",
+            "tokenBudget=100&maxContexts=10&maxItems=5",
+        ) + listOf(
+            "tokenBudget=100&maxContexts=10&" + (1..33).joinToString("&") { "scope=s$it" },
+        )
+        for (query in invalid) {
+            val response = call("GET", "/contexts/pinned?$query")
+            assertEquals(400, response.status, query)
+            assertEquals("INVALID_FIELD", response.str("error"), query)
+            assertFalse(response.json.containsKey("contexts"), query)
+        }
+    }
+
+    @Test
+    fun `GET pinned is not routed to the item route and other methods are 405`() {
+        seed(1)
+        val response = call("GET", pinnedPath("tokenBudget=100", "maxContexts=10"))
+        assertEquals(200, response.status)
+        assertFalse(response.json.containsKey("error"))
+
+        for (method in listOf("POST", "PATCH", "PUT", "DELETE")) {
+            val rejected = call(method, pinnedPath("tokenBudget=100", "maxContexts=10"), body = if (method == "DELETE") null else "{}")
+            assertEquals(405, rejected.status, method)
+            assertEquals("METHOD_NOT_ALLOWED", rejected.str("error"), method)
+            assertEquals("GET", rejected.headers.firstValue("Allow").orElse(null), method)
+        }
+    }
+
+    @Test
+    fun `unsupported enumeration is 503 PINNED_UNSUPPORTED with no partial result`() {
+        // A storage port that does not override enumerateTenant keeps the default Unsupported.
+        startWith(PinnedContextReader(NoEnumerationStorage(memory), contentLengthTokens))
+        seed(1)
+        assertPinnedFailure(call("GET", pinnedPath("tokenBudget=100", "maxContexts=10")), "PINNED_UNSUPPORTED")
+    }
+
+    @Test
+    fun `too many contexts is 503 PINNED_TOO_LARGE with no partial result`() {
+        startWith(PinnedContextReader(memory, contentLengthTokens, maxEnumeratedObjects = 2))
+        seed(1)
+        seed(2)
+        seed(3)
+        assertPinnedFailure(call("GET", pinnedPath("tokenBudget=100", "maxContexts=10")), "PINNED_TOO_LARGE")
+    }
+
+    @Test
+    fun `unavailable enumeration is 503 PINNED_UNAVAILABLE with no partial result`() {
+        startWith(PinnedContextReader(EnumerationStub(memory, EnumerationResult.Unavailable), contentLengthTokens))
+        seed(1)
+        assertPinnedFailure(call("GET", pinnedPath("tokenBudget=100", "maxContexts=10")), "PINNED_UNAVAILABLE")
+    }
+
+    @Test
+    fun `a required read that is unavailable fails the whole pinned request`() {
+        // Enumeration succeeds but the authoritative re-read of one key fails: no partial set may be returned.
+        startWith(PinnedContextReader(ReadFailingStorage(memory, failingId = seedId(2)), contentLengthTokens))
+        seed(1)
+        seed(2)
+        assertPinnedFailure(call("GET", pinnedPath("tokenBudget=100", "maxContexts=10")), "PINNED_UNAVAILABLE")
+    }
+
+    private fun assertPinnedFailure(response: Resp, code: String) {
+        assertEquals(503, response.status)
+        assertEquals(code, response.str("error"))
+        assertFalse(response.json.containsKey("contexts"), "a failed pinned request must not carry contexts")
+        assertFalse(response.json.containsKey("usedTokens"))
+        assertFalse(response.json.containsKey("limited"))
+    }
+
     // ---- helpers -----------------------------------------------------------------------------
 
     private class Resp(val status: Int, val json: JsonObject, val headers: HttpHeaders) {
         fun str(key: String): String = json[key]!!.jsonPrimitive.content
         fun num(key: String): Long = json[key]!!.jsonPrimitive.long
+        fun contexts(): List<Resp> = json["contexts"]!!.jsonArray.map { Resp(status, it.jsonObject, headers) }
+    }
+
+    /** Delegates everything except enumeration, which keeps the port default (Unsupported). */
+    private class NoEnumerationStorage(private val inner: ContextStorage) : ContextStorage {
+        override fun get(tenantId: String, id: String): ReadResult = inner.get(tenantId, id)
+        override fun createIfAbsent(value: ContextAggregate): WriteResult = inner.createIfAbsent(value)
+        override fun compareAndSwap(tenantId: String, id: String, expectedStorageRevision: Long, value: ContextAggregate): WriteResult =
+            inner.compareAndSwap(tenantId, id, expectedStorageRevision, value)
+    }
+
+    /** Delegates everything and returns a fixed enumeration result. */
+    private class EnumerationStub(private val inner: ContextStorage, private val result: EnumerationResult) : ContextStorage {
+        override fun get(tenantId: String, id: String): ReadResult = inner.get(tenantId, id)
+        override fun createIfAbsent(value: ContextAggregate): WriteResult = inner.createIfAbsent(value)
+        override fun compareAndSwap(tenantId: String, id: String, expectedStorageRevision: Long, value: ContextAggregate): WriteResult =
+            inner.compareAndSwap(tenantId, id, expectedStorageRevision, value)
+        override fun enumerateTenant(tenantId: String, maxItems: Int): EnumerationResult = result
+    }
+
+    /** Enumerates normally but fails the authoritative re-read of one key. */
+    private class ReadFailingStorage(private val inner: ContextStorage, private val failingId: String) : ContextStorage {
+        override fun get(tenantId: String, id: String): ReadResult =
+            if (id == failingId) ReadResult.Unavailable else inner.get(tenantId, id)
+        override fun createIfAbsent(value: ContextAggregate): WriteResult = inner.createIfAbsent(value)
+        override fun compareAndSwap(tenantId: String, id: String, expectedStorageRevision: Long, value: ContextAggregate): WriteResult =
+            inner.compareAndSwap(tenantId, id, expectedStorageRevision, value)
+        override fun enumerateTenant(tenantId: String, maxItems: Int): EnumerationResult =
+            inner.enumerateTenant(tenantId, maxItems)
     }
 
     private fun call(

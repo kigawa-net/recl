@@ -22,10 +22,14 @@ import net.kigawa.recl.core.ContextStatus
 import net.kigawa.recl.core.CreateContextMutation
 import net.kigawa.recl.core.DeleteContextMutation
 import net.kigawa.recl.core.MutationResult
+import net.kigawa.recl.core.PinnedContextReader
+import net.kigawa.recl.core.PinnedContextResult
+import net.kigawa.recl.core.PinnedQuery
 import net.kigawa.recl.core.Principal
 import net.kigawa.recl.core.Sensitivity
 import net.kigawa.recl.core.SessionAuthenticator
 import net.kigawa.recl.core.TrustedContextQueryGateway
+import net.kigawa.recl.core.TrustedPinnedQueryGateway
 import net.kigawa.recl.core.TrustedMutationGateway
 import net.kigawa.recl.core.UpdateContextMutation
 import java.io.IOException
@@ -46,6 +50,8 @@ class ContextRestApi(
     private val service: ContextService,
     private val reader: ContextReader,
     private val authenticator: SessionAuthenticator,
+    /** Pinned retrieval (`GET /contexts/pinned`). Its enumeration capability is supplied by the storage port. */
+    private val pinnedReader: PinnedContextReader,
 ) : HttpHandler {
 
     override fun handle(exchange: HttpExchange) {
@@ -68,7 +74,13 @@ class ContextRestApi(
     private fun dispatch(ex: HttpExchange): ApiResponse {
         val segments = (ex.requestURI.rawPath ?: throw notFound()).split('/')
         val isCollection = segments.size == 2 && segments[0].isEmpty() && segments[1] == "contexts"
+        val isPinned = segments.size == 3 && segments[0].isEmpty() && segments[1] == "contexts" && segments[2] == "pinned"
         val isItem = segments.size == 3 && segments[0].isEmpty() && segments[1] == "contexts"
+        // "pinned" is a reserved literal, checked before the {contextId} item route (it is not a UUIDv7).
+        if (isPinned) {
+            if (ex.requestMethod != "GET") throw methodNotAllowed("GET")
+            return listPinned(ex)
+        }
         if (isCollection) {
             if (ex.requestMethod != "POST") throw methodNotAllowed("POST")
             return createContext(ex)
@@ -83,6 +95,39 @@ class ContextRestApi(
             }
         }
         throw notFound()
+    }
+
+    /**
+     * `GET /contexts/pinned?scope=…&tokenBudget=…&maxContexts=…`. Owner and tenant come from the authenticated
+     * Principal; `scope` is a repeatable relevance filter. A partial result is never returned as a success:
+     * enumeration failures map to 503 with a distinct code and no `contexts` field.
+     */
+    private fun listPinned(ex: HttpExchange): ApiResponse {
+        val token = bearerToken(ex)
+        val query = parsePinnedQuery(ex)
+        val auth = CapturingAuthenticator(authenticator)
+        return when (val result = TrustedPinnedQueryGateway(pinnedReader, auth).list(token, query)) {
+            is PinnedContextResult.Found -> ApiResponse(200, buildJsonObject {
+                put("contexts", JsonArray(result.contexts.map { it.toJson() }))
+                put("usedTokens", result.usedTokens)
+                put("limited", result.limited)
+            })
+            // The gateway returns Forbidden only when the bearer credential does not verify.
+            PinnedContextResult.Forbidden -> throw unauthenticated()
+            PinnedContextResult.InvalidRequest -> throw invalidField("pinned query parameters are out of range")
+            PinnedContextResult.Unsupported -> throw ApiException(
+                503, "PINNED_UNSUPPORTED",
+                "pinned retrieval needs a complete authoritative enumeration, which this storage does not provide",
+            )
+            PinnedContextResult.TooLarge -> throw ApiException(
+                503, "PINNED_TOO_LARGE",
+                "the tenant has too many Contexts for a complete pinned enumeration; no partial result is returned",
+            )
+            PinnedContextResult.Unavailable -> throw ApiException(
+                503, "PINNED_UNAVAILABLE",
+                "pinned retrieval could not complete an authoritative read; no partial result is returned",
+            )
+        }
     }
 
     private fun createContext(ex: HttpExchange): ApiResponse {
@@ -244,6 +289,49 @@ class ContextRestApi(
         return out
     }
 
+    /**
+     * Strict parse of the pinned query. `scope` may repeat (at most 32 values, each non-blank and at most 256
+     * characters). `tokenBudget` (1..100000) and `maxContexts` (1..100) are required and must appear once.
+     */
+    private fun parsePinnedQuery(ex: HttpExchange): PinnedQuery {
+        val scopes = LinkedHashSet<String>()
+        val single = HashMap<String, String>()
+        val raw = ex.requestURI.rawQuery.orEmpty()
+        if (raw.isNotEmpty()) for (part in raw.split('&')) {
+            val eq = part.indexOf('=')
+            val name = decode(if (eq < 0) part else part.substring(0, eq))
+            val value = if (eq < 0) "" else decode(part.substring(eq + 1))
+            when (name) {
+                "scope" -> {
+                    if (value.isBlank() || value.length > MAX_SCOPE_LENGTH) {
+                        throw invalidField("'scope' must be non-blank and at most $MAX_SCOPE_LENGTH characters")
+                    }
+                    scopes += value
+                }
+                "tokenBudget", "maxContexts" -> {
+                    if (single.put(name, value) != null) throw invalidField("duplicate query parameter '$name'")
+                }
+                else -> throw invalidField("unknown query parameter '$name'")
+            }
+        }
+        if (scopes.size > MAX_SCOPES) throw invalidField("at most $MAX_SCOPES 'scope' values are accepted")
+        return PinnedQuery(
+            scopes = scopes,
+            tokenBudget = boundedQueryInt("tokenBudget", single["tokenBudget"], 1..100_000),
+            maxContexts = boundedQueryInt("maxContexts", single["maxContexts"], 1..100),
+        )
+    }
+
+    private fun boundedQueryInt(name: String, raw: String?, range: IntRange): Int {
+        if (raw == null) throw invalidField("query parameter '$name' is required")
+        if (!DIGITS.matches(raw)) throw invalidField("'$name' must be a positive integer")
+        val value = raw.toLong()
+        if (value < range.first || value > range.last) {
+            throw invalidField("'$name' must be between ${range.first} and ${range.last}")
+        }
+        return value.toInt()
+    }
+
     private fun decode(s: String): String = try {
         URLDecoder.decode(s, StandardCharsets.UTF_8)
     } catch (_: IllegalArgumentException) {
@@ -275,6 +363,8 @@ class ContextRestApi(
             "scopes", "sensitivity", "validFromEpochMillis", "validUntilEpochMillis",
         )
         private val DELETE_QUERY_PARAMS = setOf("requestId", "expectedContentRevision")
+        private const val MAX_SCOPES = 32
+        private const val MAX_SCOPE_LENGTH = 256
     }
 }
 

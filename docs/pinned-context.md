@@ -37,7 +37,7 @@ Scope and security blockers:
 
 - Production `SessionAuthenticator` (OIDC/service principal verification, tenant grants) is not implemented.
 - ContextAggregate now tracks validFrom/validUntil, sensitivity and bounded unverified Source Provenance, but not trusted source attestation, priority or full RBAC. **Automatic Pinned retrieval must not be enabled for production before these policies are added and verified**.
-- No public MCP/REST pinned endpoint has been implemented.
+- A test-only REST endpoint `GET /contexts/pinned` exists in `:api-rest` (see [rest-context-api.md](rest-context-api.md)). It is not wired into `app/Main.kt`, and no MCP pinned tool exists. Automatic Pinned injection remains **disabled** for production.
 - Fortis does not yet supply a verified authoritative scan capability to recl; [Fortis #44](https://github.com/kigawa-net/fortis/issues/44) conditional KV batch alone does not guarantee `scanAtRevision`.
 - Pin selection from a live multi-node Fortis snapshot is **unsupported** until [recl #14](https://github.com/kigawa-net/recl/issues/14) verifies real scan, CAS, read and crash-recovery behavior.
 - Kivra integration requires [recl #21](https://github.com/kigawa-net/recl/issues/21) and [Kivra #71](https://github.com/kigawa-net/kivra/issues/71) contract/capability tests, not merely Fake test success.
