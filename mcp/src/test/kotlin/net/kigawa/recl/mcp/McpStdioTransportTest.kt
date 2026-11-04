@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.kigawa.recl.core.ContextReader
@@ -91,6 +92,28 @@ class McpStdioTransportTest {
     @Test
     fun `notification-only input closes without output`() {
         assertEquals("", run("""{"jsonrpc":"2.0","method":"notifications/initialized"}""" + "\n"))
+    }
+
+    @Test
+    fun `tool calls round-trip over stdio`() {
+        val id = "019a1a2b-3c4d-7e8f-8a9b-1c2d3e4f5a6b"
+        val requestId = "019a1a2b-3c4d-7e8f-8a9b-1c2d3e4f5a10"
+        val output = run(
+            """
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_context","arguments":{"contextId":"$id","requestId":"$requestId","kind":"decision","status":"confirmed","title":"T","summary":"S","content":"C"}}}
+            {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_context","arguments":{"id":"$id"}}}
+            {"jsonrpc":"2.0","method":"notifications/initialized"}
+            """.trimIndent() + "\n",
+        )
+
+        val lines = output.trim().lines()
+        assertEquals(3, lines.size, output)
+        val saved = Json.parseToJsonElement(lines[1]).jsonObject["result"]!!.jsonObject
+        assertEquals("false", saved["isError"]!!.jsonPrimitive.content)
+        val read = Json.parseToJsonElement(lines[2]).jsonObject["result"]!!.jsonObject
+        val text = read["content"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content
+        assertTrue(text.contains("\"title\":\"T\""))
     }
 
     private fun run(input: String, limit: Int = 1 shl 20): String {
