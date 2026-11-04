@@ -7,4 +7,9 @@ kotlin { jvmToolchain(21) }
 
 application { mainClass.set("net.kigawa.recl.app.MainKt") }
 
-dependencies { implementation(project(":core")) }
+dependencies {
+    implementation(project(":core"))
+    testImplementation(kotlin("test"))
+}
+
+tasks.test { useJUnitPlatform() }

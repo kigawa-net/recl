@@ -1,0 +1,7 @@
+.git
+.gradle
+.kotlin
+.idea
+.claude
+**/build
+docs
