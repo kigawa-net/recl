@@ -20,6 +20,26 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Fail before tests/build/push so a missing secret produces one actionable message instead of
+      # a confusing docker/login error after minutes of work.
+      - name: Verify deploy credentials are configured
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          K8S_DEPLOY_TOKEN: ${{ secrets.K8S_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in HARBOR_USERNAME HARBOR_PASSWORD K8S_DEPLOY_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error title=Deploy credentials missing::Missing repository secrets: ${missing[*]}. Add them under Settings > Secrets and variables > Actions, then re-run this workflow. No image was built or pushed."
+            exit 1
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
