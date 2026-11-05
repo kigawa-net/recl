@@ -1,6 +1,6 @@
 # Fortis ContextStorage adapter (`:storage-fortis`)
 
-Status: **adapter code and fake-port tests only**. It is not wired into the application, the production configuration still fails closed, and nothing here is a production-ready storage backend. Parent: [recl #3 Fortis Storage Adapter](https://github.com/kigawa-net/recl/issues/3); prerequisites in [recl #14](https://github.com/kigawa-net/recl/issues/14) and the design's Fortis production gate (`docs/design.md` section 11).
+Status: **adapter code and fake-port tests only**. It is not wired into the application, the production configuration still fails closed, and nothing here is a production-ready storage backend. Parent: [recl #3 Fortis Storage Adapter](https://github.com/kigawa-net/recl/issues/3); prerequisites in [recl #14](https://github.com/kigawa-net/recl/issues/14) and the design's Fortis production gate (`docs/design.md` section 11). See [fortis-binding-assessment.md](fortis-binding-assessment.md) for the 2026-11-05 real-binding verdict (currently blocked on Fortis #33/#34).
 
 ## Layout
 
