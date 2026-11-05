@@ -2,7 +2,7 @@
 
 recl is a **development context repository** for coding agents. It stores durable project decisions, architecture, constraints, findings, and provenance so that agents such as Claude Code can retrieve the relevant context across sessions.
 
-> **Status: initial Core implementation / bootstrap.** The repository does not yet provide a production-ready service. The Fortis Storage Adapter, MCP server, and Qdrant indexer are planned, not shipped.
+> **Status: initial Core implementation / bootstrap.** The repository does not yet provide a production-ready service. A test-only REST/MCP adapter and a Fortis port-level adapter exist, but the real Fortis binding, launcher, authentication, and Qdrant indexer are planned, not shipped.
 
 ## Architecture
 
@@ -73,10 +73,10 @@ See [the implementation design](docs/design.md) for key layout, write/read proto
 
 ## Development
 
-The initial bootstrap uses **Kotlin/JVM 21**, Gradle 8.14.3, and three modules: `:core`, `:storage-memory`, and `:app`.
+The initial bootstrap uses **Kotlin/JVM 21**, Gradle 9.6.0, and the modules `:core`, `:storage-memory`, `:storage-fortis`, `:api-rest`, `:mcp`, `:source-github`, and `:app`.
 
-Install Gradle 8.14.3 and JDK 21, then run `gradle test`. The GitHub Actions Kotlin CI workflow runs this command on pull requests. A Gradle Wrapper is **not yet committed**; follow [bootstrap issue #18](https://github.com/kigawa-net/recl/issues/18) for that work.
+Run `./gradlew test` (JDK 21). The GitHub Actions Kotlin CI workflow runs the same suite on pull requests.
 
-The executable app is currently a **fail-closed placeholder**, not an MCP/REST server. `:storage-memory` is a test adapter only. Fortis, Qdrant, and Claude Code MCP integration are not yet implemented.
+The executable app is currently a **fail-closed placeholder** with only `GET /health`, not an MCP/REST server. `:storage-memory` is a test adapter only. `:api-rest` and `:mcp` expose test-only adapter slices over the trusted gateways (see [REST docs](docs/rest-context-api.md) and [MCP docs](docs/mcp-server.md)); neither has a production authenticator, launcher or durable storage. Fortis, Qdrant, and Claude Code MCP integration are not yet operational.
 
 See [bootstrap notes](docs/bootstrap.md) and [architecture design](docs/design.md).

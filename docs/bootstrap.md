@@ -6,14 +6,18 @@ Current scope: **initial MVP modules and contract tests**. This is not a product
 | --- | --- |
 | `:core` | ContextAggregate, revision types, ContextStorage port, CAS-based ContextService |
 | `:storage-memory` | Ephemeral and synchronized InMemoryContextStorage; test-only |
-| `:app` | Placeholder entry point; refuses to start until a production-ready backend exists |
+| `:storage-fortis` | Fortis-facing ContextStorage adapter over a recl-side KV port; the real binding is still open |
+| `:api-rest` | Context CRUD/pinned REST adapter over the trusted gateways; test-only, no launcher |
+| `:mcp` | MCP JSON-RPC/stdio adapter and tool contract; test-only, no launcher |
+| `:source-github` | Scoped GitHub App token broker and source attestation adapters |
+| `:app` | Minimal `/health` HTTP process; the Context API remains disabled |
 
-Kotlin JVM plugin: 2.2.20. Java toolchain: 21. Gradle: 8.14.3 (installed by GitHub Actions; the repository's Gradle Wrapper is still pending).
+Kotlin JVM plugin: 2.2.20. Java toolchain: 21. Gradle: 9.6.0 (wrapper committed).
 
 ## Local verification
 
 ```sh
-gradle test --no-daemon
+./gradlew test --no-daemon
 ```
 
 The initial JUnit suite covers concurrent writers, logical vs physical revisions, duplicate request identity, owner/tenant isolation, tombstones, and reconciliation after a lost write acknowledgement. It does not simulate Raft consensus or physical storage failure.
@@ -31,7 +35,7 @@ The initial JUnit suite covers concurrent writers, logical vs physical revisions
 
 ## Next steps
 
-1. Generate and commit official Gradle Wrapper and check `./gradlew test` in CI ([#18](https://github.com/kigawa-net/recl/issues/18)).
+1. ~~Generate and commit the official Gradle Wrapper~~ (done, Gradle 9.6.0).
 2. Implement trusted authorization boundaries and canonical request envelopes ([#16](https://github.com/kigawa-net/recl/issues/16)).
 3. Validate the actual Fortis public KV API before implementing its adapter ([#14](https://github.com/kigawa-net/recl/issues/14)).
 4. Only then integrate Fortis, Qdrant, MCP, and REST, with fault-injection tests.
