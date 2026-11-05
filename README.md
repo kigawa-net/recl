@@ -73,10 +73,10 @@ See [the implementation design](docs/design.md) for key layout, write/read proto
 
 ## Development
 
-The initial bootstrap uses **Kotlin/JVM 21**, Gradle 9.6.0, and the modules `:core`, `:storage-memory`, `:storage-fortis`, `:api-rest`, `:mcp`, `:source-github`, and `:app`.
+The initial bootstrap uses **Kotlin/JVM 21**, Gradle 9.6.0, and the modules `:core`, `:storage-memory`, `:storage-fortis`, `:api-rest`, `:mcp`, `:dev-mcp`, `:source-github`, and `:app`.
 
 Run `./gradlew test` (JDK 21). The GitHub Actions Kotlin CI workflow runs the same suite on pull requests.
 
-The executable app is currently a **fail-closed placeholder** with only `GET /health`, not an MCP/REST server. `:storage-memory` is a test adapter only. `:api-rest` and `:mcp` expose test-only adapter slices over the trusted gateways (see [REST docs](docs/rest-context-api.md) and [MCP docs](docs/mcp-server.md)); neither has a production authenticator, launcher or durable storage. Fortis, Qdrant, and Claude Code MCP integration are not yet operational.
+The executable app is currently a **fail-closed placeholder** with only `GET /health`, not an MCP/REST server. `:storage-memory` is a test adapter only. `:api-rest` and `:mcp` expose test-only adapter slices over the trusted gateways (see [REST docs](docs/rest-context-api.md) and [MCP docs](docs/mcp-server.md)); neither has a production authenticator or durable storage. `:dev-mcp` is a separate, explicitly gated stdio launcher for local Claude Code testing with ephemeral storage ([dev MCP docs](docs/dev-mcp.md)); it is excluded from the production image. Fortis, Qdrant, and durable Claude Code MCP integration are not yet operational.
 
 See [bootstrap notes](docs/bootstrap.md) and [architecture design](docs/design.md).

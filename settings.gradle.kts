@@ -7,4 +7,4 @@ pluginManagement {
     }
 }
 
-include(":core", ":storage-memory", ":storage-fortis", ":app", ":source-github", ":api-rest", ":mcp")
+include(":core", ":storage-memory", ":storage-fortis", ":app", ":source-github", ":api-rest", ":mcp", ":dev-mcp")
