@@ -10,6 +10,7 @@ Current scope: **initial MVP modules and contract tests**. This is not a product
 | `:api-rest` | Context CRUD/pinned REST adapter over the trusted gateways; test-only, no launcher |
 | `:mcp` | MCP JSON-RPC/stdio adapter and tool contract; test-only, no launcher |
 | `:dev-mcp` | Dev-only stdio launcher with ephemeral storage; never part of the production image |
+| `:index` | Index reconciliation over injected search-index and embedding ports; test-only, no Qdrant adapter |
 | `:source-github` | Scoped GitHub App token broker and source attestation adapters |
 | `:app` | Minimal `/health` HTTP process; the Context API remains disabled |
 
