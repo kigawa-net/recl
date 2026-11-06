@@ -28,20 +28,52 @@ Claude Code / other agents
 
 - **Fortis** is the intended authoritative store for Context, lifecycle, scope/ACL, revisions, and pending index intent.
 - **Qdrant** is a rebuildable, eventually consistent search index, **not** an authorization boundary.
-- **Storage Port** isolates recl Core from Fortis's evolving public KV API.
-- **InMemory Adapter** is strictly for development and tests. Production must fail closed rather than silently switching to ephemeral storage.
-- **MCP** is the first agent integration; REST and other agents can use the same application services.
+- **Storage Port** is the abstraction layer between the service and the storage backend.
 
-## Context model
+## Design documentation
 
-The initial Context types are `decision`, `architecture`, `constraint`, `task`, `finding`, `reference`, and `preference`.
+| Topic | Location | Status |
+|-------|----------|--------|
+| [Architecture overview](docs/design.md) | `docs/design.md` | ✅ Complete |
+| [Context domain model](docs/design.md#3-context-domain) | `docs/design.md` | ✅ Complete |
+| [Revision model](docs/design.md#4-revision-model) | `docs/design.md` | ✅ Complete |
+| [Storage Port interface](docs/design.md#5-storage-port) | `docs/design.md` | ✅ Complete |
+| [Context mutation protocol](docs/design.md#6-context-mutation-protocol) | `docs/design.md` | ✅ Complete |
+| [Search and authorization](docs/design.md#7-search-and-authorization-protocol) | `docs/design.md` | ✅ Complete |
+| [Index reconciliation](docs/index-reconciliation.md) | `docs/index-reconciliation.md` | ✅ MVP |
+| [MCP tools catalog](docs/design.md#9-mcp-minimum-tools) | `docs/design.md` | ✅ MVP |
+| [Bootstrap module layout](docs/bootstrap.md) | `docs/bootstrap.md` | ✅ Complete |
 
-A Context belongs to a **Tenant** and is governed by an **Access Policy**. Its `Scope` values (repository, project, module, branch, task, topic) select relevant context, but they do **not** confer read/write permissions.
+### Core contracts and evidence
 
-Revisions serve different purposes:
-- `contentRevision`: logical changes to content, scope, status, or ACL.
-- `storageRevision`: conditional write/CAS generation at the storage boundary.
-- `indexedContentRevision`: last acknowledged Qdrant projection of a content revision.
+| Document | Issue | Status |
+|----------|-------|--------|
+| [Design](docs/design.md) | #1 | ✅ Complete |
+| [Storage Port](docs/design.md#5-storage-port) | #15 | ✅ Complete |
+| [Context mutation](docs/design.md#6-context-mutation-protocol) | #16 | ✅ Complete |
+| [Core contract evidence](docs/core-contract-evidence.md) | #15/#16 | ✅ Evidence matrix |
+
+### Index and search
+
+| Document | Issue | Status |
+|----------|-------|--------|
+| [Index reconciliation](docs/index-reconciliation.md) | #5/#10/#13 | ✅ Test slice |
+| [Qdrant adapter design](docs/qdrant-adapter-design.md) | #5 | ✅ Design only |
+
+### MCP and API
+
+| Document | Issue | Status |
+|----------|-------|--------|
+| [MCP server](docs/mcp-server.md) | #7 | ✅ Test-only |
+| [MCP production readiness](docs/mcp-production-readiness.md) | #7 | ✅ Readiness assessment |
+| [REST API](docs/rest-context-api.md) | #4 | ✅ Test-only |
+
+### Storage and providers
+
+| Document | Issue | Status |
+|----------|-------|--------|
+| [Fortis binding](docs/fortis-binding-assessment.md) | #2/#3/#14 | ⏸ Blocked |
+| [Production capability gate](docs/production-capability-gate.md) | #65 | ✅ Capability inventory |
 
 ## Consistency and failure rules
 
@@ -66,6 +98,7 @@ Revisions serve different purposes:
 | Single-key aggregate and index reconciliation | [#13](https://github.com/kigawa-net/recl/issues/13) |
 | Index Worker / Qdrant synchronization | [#5](https://github.com/kigawa-net/recl/issues/5) |
 | Claude Code MCP Server | [#7](https://github.com/kigawa-net/recl/issues/7) |
+| Production capability gate | [#65](https://github.com/kigawa-net/recl/issues/65) |
 
 Fortis is under development. In particular, Snapshot/Recovery and public conditional KV capabilities require verification before recl can claim a production-ready Fortis backend.
 
