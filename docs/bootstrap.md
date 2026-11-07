@@ -16,6 +16,13 @@ Current scope: **initial MVP modules and contract tests**. This is not a product
 
 Kotlin JVM plugin: 2.2.20. Java toolchain: 21. Gradle: 9.6.0 (wrapper committed).
 
+## Documentation
+
+- [Architecture design](../design.md) - Complete architecture and trust boundaries
+- [Index reconciliation](index-reconciliation.md) - Outbox pattern and test slice
+- [Production capability gate](production-capability-gate.md) - Capability inventory and evidence matrix
+- [Core contract evidence](core-contract-evidence.md) - Issue #15/#16 acceptance test mapping
+
 ## Local verification
 
 ```sh
