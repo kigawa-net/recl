@@ -8,6 +8,19 @@ import kotlin.test.assertTrue
 
 class ReclHttpServerTest {
     @Test
+    fun `mcp is not registered by default`() {
+        ReclHttpServer(host = "127.0.0.1", port = 0, mcp = null, mcpStorageMode = null).use { server ->
+            server.start()
+            val connection = URL("http://127.0.0.1:${server.address().port}/mcp").openConnection() as HttpURLConnection
+            try {
+                assertEquals(404, connection.responseCode)
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+
+    @Test
     fun `health endpoint returns ok`() {
         ReclHttpServer(host = "127.0.0.1", port = 0).use { server ->
             server.start()

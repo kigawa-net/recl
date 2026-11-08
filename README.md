@@ -2,7 +2,7 @@
 
 recl is a **development context repository** for coding agents. It stores durable project decisions, architecture, constraints, findings, and provenance so that agents such as Claude Code can retrieve the relevant context across sessions.
 
-> **Status: initial Core implementation / bootstrap.** The repository does not yet provide a production-ready service. A test-only REST/MCP adapter and a Fortis port-level adapter exist, but the real Fortis binding, launcher, authentication, and Qdrant indexer are planned, not shipped.
+> **Status: initial Core implementation / bootstrap.** The repository does not yet provide a production-ready service. A test-only REST adapter, an environment-gated HTTP MCP launcher with OIDC JWT or local static Bearer authentication and ephemeral storage, and a Fortis port-level adapter exist. The real Fortis binding and Qdrant indexer are not implemented; production OIDC policy and client interoperability still require deployment validation.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ Claude Code / other agents
         Storage Port
            /   \
           /     \
-   Fortis Adapter  InMemory Adapter (tests only)
+   Fortis Adapter  InMemory Adapter (tests / gated ephemeral MCP)
           |
        Fortis KV  <-- source of truth
           |
@@ -110,6 +110,6 @@ The initial bootstrap uses **Kotlin/JVM 21**, Gradle 9.6.0, and the modules `:co
 
 Run `./gradlew test` (JDK 21). The GitHub Actions Kotlin CI workflow runs the same suite on pull requests.
 
-The executable app is currently a **fail-closed placeholder** with only `GET /health`, not an MCP/REST server. `:storage-memory` is a test adapter only. `:api-rest` and `:mcp` expose test-only adapter slices over the trusted gateways (see [REST docs](docs/rest-context-api.md) and [MCP docs](docs/mcp-server.md)); neither has a production authenticator or durable storage. `:dev-mcp` is a separate, explicitly gated stdio launcher for local Claude Code testing with ephemeral storage ([dev MCP docs](docs/dev-mcp.md)); it is excluded from the production image. `:index` holds the test-only index reconciliation slice over injected `SearchIndexPort`/`EmbeddingProvider` ports ([index docs](docs/index-reconciliation.md)); no Qdrant adapter or scheduler is wired. Fortis, Qdrant, and durable Claude Code MCP integration are not yet operational.
+The executable app serves `GET /health` and a read-only MVP dashboard at `GET /dashboard`. `GET /dashboard/api/metrics` returns JSON with server-instance uptime in seconds, total HTTP request count (all paths and methods, including metrics requests), JVM/OS information, and module wiring states. The dashboard has no authentication and is not production-ready. MCP is disabled by default; `POST /mcp` can be enabled through explicit environment gates with OIDC JWT validation (`RECL_MCP_AUTH=oidc`) or a static Bearer token for local development (`token`, the default) ([HTTP MCP setup](docs/mcp-http.md)). Persistence is not implemented: the temporary `:storage-memory` wiring requires acknowledgement that all Context is lost on restart. `:api-rest` remains a test-only adapter slice; `:mcp` supplies the shared transport-independent protocol and tools (see [REST docs](docs/rest-context-api.md) and [MCP docs](docs/mcp-server.md)). `:dev-mcp` is a separate, explicitly gated stdio launcher for local Claude Code testing with ephemeral storage ([dev MCP docs](docs/dev-mcp.md)); it is excluded from the production image. `:index` holds the test-only index reconciliation slice over injected `SearchIndexPort`/`EmbeddingProvider` ports ([index docs](docs/index-reconciliation.md)); no Qdrant adapter or scheduler is wired. OIDC fixes the tenant in configuration and derives each user from the verified JWT; configure an audience or dedicated required scope for production. Fortis, Qdrant, and durable MCP integration are not yet operational, and live Keycloak/OpenCode OIDC integration remains to be validated.
 
 See [bootstrap notes](docs/bootstrap.md) and [architecture design](docs/design.md).

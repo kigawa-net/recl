@@ -1,19 +1,42 @@
 package net.kigawa.recl.app
 
+import com.sun.net.httpserver.Filter
+import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
+import kotlin.system.exitProcess
 
-/** Minimal HTTP process. The context API remains disabled until durable storage is configured. */
+/** HTTP process with an explicitly gated, ephemeral MCP runtime. */
 class ReclHttpServer(
     private val host: String = "0.0.0.0",
     private val port: Int = 8080,
+    mcp: HttpHandler? = null,
+    mcpStorageMode: String? = null,
+    metadata: HttpHandler? = null,
 ) : AutoCloseable {
     private val server = HttpServer.create(InetSocketAddress(host, port), 0)
+    private val dashboard = Dashboard(mcp != null, mcpStorageMode)
 
     init {
-        server.createContext("/health", ::health)
+        val requestCounter = Filter.beforeHandler("Count incoming HTTP requests") { dashboard.recordRequest() }
+        buildList {
+            if (metadata != null) add(server.createContext("/.well-known/oauth-protected-resource", metadata))
+            if (mcp != null) add(server.createContext("/mcp", mcp))
+            addAll(
+                listOf(
+                    server.createContext("/health", ::health),
+                    server.createContext("/dashboard", dashboard::page),
+                    server.createContext("/dashboard/api/metrics", dashboard::metrics),
+                    server.createContext("/") { exchange ->
+                        exchange.use { respond(exchange, 404, "{\"error\":\"not_found\"}", exchange.requestMethod == "HEAD") }
+                    },
+                ),
+            )
+        }.forEach { context ->
+            context.filters.add(requestCounter)
+        }
         server.executor = Executors.newVirtualThreadPerTaskExecutor()
     }
 
@@ -46,10 +69,17 @@ class ReclHttpServer(
 }
 
 fun main() {
+    val mcp = McpRuntime.resolve(System.getenv())
+    if (mcp is McpRuntime.Rejected) {
+        System.err.println("recl refused to start: ${mcp.reason}")
+        exitProcess(2)
+    }
+    val enabled = mcp as? McpRuntime.Enabled
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     require(port in 1..65535) { "PORT must be between 1 and 65535" }
-    val server = ReclHttpServer(port = port)
+    val server = ReclHttpServer(port = port, mcp = enabled?.handler, mcpStorageMode = enabled?.storageMode, metadata = enabled?.metadataHandler)
     Runtime.getRuntime().addShutdownHook(Thread { server.close() })
     server.start()
+    println("recl MCP ${if (enabled != null) "enabled" else "disabled"}; auth: ${enabled?.authMode ?: "not_configured"}; storage: ${enabled?.storageMode ?: "not_configured"}")
     println("recl HTTP server listening on ${server.address()}")
 }
