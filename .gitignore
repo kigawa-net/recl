@@ -6,3 +6,5 @@ out/
 *.log
 .env
 .claude/worktrees/
+# Harbor CI robot account のパスワード（ローカル作業用。コミット禁止）
+harbor-pass

@@ -65,7 +65,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: harbor.kigawa.net/kigawa-net/recl:${{ github.sha }}
+          tags: harbor.kigawa.net/library/recl:${{ github.sha }}
 
       - name: Update GitOps image tag
         env:
@@ -75,7 +75,8 @@ jobs:
           set -euo pipefail
           git clone "https://x-access-token:${GH_TOKEN}@github.com/kigawa-net/kigawa-net-k8s.git" /tmp/kigawa-net-k8s
           cd /tmp/kigawa-net-k8s
-          sed -i -E "s|(harbor\.kigawa\.net/kigawa-net/recl:).*|\\1${IMAGE_TAG}|" recl/deployment.yaml
+          # kigawa-net プロジェクトではなく library を使う（CI ユーザー kigawa の権限があるため）
+          sed -i -E "s|harbor\.kigawa\.net/[^/]+/recl:.*|harbor.kigawa.net/library/recl:${IMAGE_TAG}|" recl/deployment.yaml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add recl/deployment.yaml
