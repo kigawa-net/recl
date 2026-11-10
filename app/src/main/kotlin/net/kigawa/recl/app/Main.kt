@@ -30,7 +30,11 @@ class ReclHttpServer(
                     server.createContext("/dashboard", dashboard::page),
                     server.createContext("/dashboard/api/metrics", dashboard::metrics),
                     server.createContext("/") { exchange ->
-                        exchange.use { respond(exchange, 404, "{\"error\":\"not_found\"}", exchange.requestMethod == "HEAD") }
+                        if (exchange.requestURI.path == "/") {
+                            respondRedirect(exchange, 302, "/dashboard")
+                        } else {
+                            respond(exchange, 404, "{\"error\":\"not_found\"}")
+                        }
                     },
                 ),
             )
@@ -65,6 +69,11 @@ class ReclHttpServer(
         exchange.responseHeaders.set("Cache-Control", "no-store")
         exchange.sendResponseHeaders(status, if (head) -1 else bytes.size.toLong())
         if (!head) exchange.responseBody.use { it.write(bytes) }
+    }
+
+    private fun respondRedirect(exchange: HttpExchange, status: Int, location: String) {
+        exchange.responseHeaders.set("Location", location)
+        respond(exchange, status, "")
     }
 }
 
