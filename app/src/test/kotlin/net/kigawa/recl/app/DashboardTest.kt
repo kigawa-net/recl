@@ -2,6 +2,13 @@ package net.kigawa.recl.app
 
 import java.net.HttpURLConnection
 import java.net.URL
+import com.sun.net.httpserver.HttpHandler
+import net.kigawa.recl.core.ContextAggregate
+import net.kigawa.recl.core.ContextKind
+import net.kigawa.recl.core.ContextStatus
+import net.kigawa.recl.core.Sensitivity
+import net.kigawa.recl.core.WriteResult
+import net.kigawa.recl.storage.memory.InMemoryContextStorage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -33,6 +40,7 @@ class DashboardTest {
             assertEquals("application/json; charset=utf-8", response.contentType)
             assertEquals("no-store", response.cacheControl)
             assertTrue(response.body.contains("\"status\": \"ok\""))
+            assertTrue(response.body.contains("\"recordCount\": null"))
             assertTrue(response.body.contains("\"requestCount\": 4"))
             assertTrue(Regex("\"uptimeSeconds\": [0-9]+").containsMatchIn(response.body))
             listOf("javaVersion", "osName", "availableProcessors").forEach { key ->
@@ -44,6 +52,24 @@ class DashboardTest {
                 assertTrue(response.body.contains("\"$module\": \"not_configured\""))
             }
             assertTrue(request(server, "/dashboard/api/metrics").body.contains("\"requestCount\": 5"))
+        }
+    }
+
+    @Test
+    fun `metrics include context record count when storage is available`() {
+        val storage = InMemoryContextStorage()
+        val context = ContextAggregate(
+            tenantId = "default", id = java.util.UUID.randomUUID().toString(), ownerId = "owner",
+            kind = ContextKind.DECISION, status = ContextStatus.CONFIRMED,
+            title = "Decision", summary = "Summary", content = "Content", sensitivity = Sensitivity.INTERNAL,
+        )
+        assertTrue(storage.createIfAbsent(context) is WriteResult.Applied)
+        val placeholder = HttpHandler { exchange -> exchange.sendResponseHeaders(204, -1); exchange.close() }
+        ReclHttpServer(host = "127.0.0.1", port = 0, mcp = placeholder, storage = storage).use { server ->
+            server.start()
+            val response = request(server, "/dashboard/api/metrics")
+            assertEquals(200, response.status)
+            assertTrue(response.body.contains("\"recordCount\": 1"))
         }
     }
 

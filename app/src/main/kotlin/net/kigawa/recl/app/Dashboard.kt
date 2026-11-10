@@ -1,12 +1,15 @@
 package net.kigawa.recl.app
 
 import com.sun.net.httpserver.HttpExchange
+import net.kigawa.recl.core.ContextStorage
+import net.kigawa.recl.core.EnumerationResult
 import java.util.concurrent.atomic.AtomicLong
 
 /** Read-only MVP dashboard. Module states describe launcher wiring, not dependency health checks. */
 internal class Dashboard(
     private val mcpEnabled: Boolean = false,
     private val mcpStorageMode: String? = null,
+    private val storage: ContextStorage? = null,
 ) {
     private val createdAt = System.nanoTime()
     private val requestCount = AtomicLong()
@@ -47,11 +50,17 @@ internal class Dashboard(
         }
     }
 
+    private fun recordCount(): Int? = when (val result = storage?.enumerateTenant("default", 10_000)) {
+        is EnumerationResult.Complete -> result.contexts.size
+        else -> null
+    }
+
     private fun json(): String = """
         {
           "status": "ok",
           "uptimeSeconds": ${(System.nanoTime() - createdAt) / 1_000_000_000},
           "requestCount": ${requestCount.get()},
+          "recordCount": ${recordCount()?.toString() ?: "null"},
           "system": {
             "javaVersion": ${quote(System.getProperty("java.version"))},
             "osName": ${quote(System.getProperty("os.name"))},
@@ -133,6 +142,7 @@ internal class Dashboard(
             <p class="note">リクエスト数は全パス・全メソッドを含み、この画面からの取得も加算します。</p>
           </section>
           <section><h2>システム情報</h2><dl id="system"></dl></section>
+          <section><h2>記録されたコンテキスト</h2><div class="stat"><span class="stat-label">レコード件数</span><strong class="stat-value" id="recordCount">—</strong></div></section>
           <section>
             <h2>モジュール状態</h2>
             <p class="note">起動構成の表示です（外部サービスのヘルスチェックなし）。</p>
@@ -161,6 +171,7 @@ internal class Dashboard(
                 const metrics = await response.json();
                 document.getElementById('uptime').textContent = metrics.uptimeSeconds + ' 秒';
                 document.getElementById('requests').textContent = metrics.requestCount;
+                document.getElementById('recordCount').textContent = metrics.recordCount == null ? '—' : metrics.recordCount;
                 renderDetails('system', metrics.system);
                 renderDetails('modules', metrics.modules);
                 document.getElementById('status').textContent = 'HTTP サービス稼働中 (' + metrics.status + ')';
