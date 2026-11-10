@@ -89,33 +89,56 @@ internal class Dashboard(
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>recl 管理ダッシュボード</title>
           <style>
-            body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #f5f7fa; color: #172033; }
-            section { background: white; padding: 20px; margin: 16px 0; border-radius: 8px; }
-            dt { font-weight: bold; margin-top: 12px; }
-            dd { margin: 4px 0; }
+            * { box-sizing: border-box; }
+            body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 0 auto; padding: 16px 20px; background: #f5f7fa; color: #172033; font-size: 14px; }
+            header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 12px; }
+            h1 { font-size: 1.5rem; margin: 0; }
+            header p { margin: 0; color: #526078; }
+            nav { margin-bottom: 12px; }
+            .dashboard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+            section { background: white; padding: 14px 16px; border-radius: 8px; min-width: 0; }
+            section h2 { font-size: 1.05rem; margin: 0 0 10px; }
+            .service { grid-column: 1 / -1; }
+            .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+            .stat { padding: 8px 12px; background: #f5f7fa; border-radius: 6px; }
+            .stat-label { color: #526078; }
+            .stat-value { display: block; font-size: 1.25rem; font-weight: 650; }
+            dl { display: grid; grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr); gap: 5px 10px; margin: 0; }
+            dt { font-weight: 600; }
+            dd { margin: 0; overflow-wrap: anywhere; }
+            .note { margin: 10px 0 0; color: #526078; font-size: .85rem; }
+            #status { margin: 0 0 8px; }
             a { color: #155bb5; }
-            button { padding: 8px 16px; cursor: pointer; }
+            button { margin-top: 12px; padding: 6px 12px; cursor: pointer; }
+            @media (max-width: 620px) {
+              body { padding: 12px; }
+              .dashboard { grid-template-columns: 1fr; }
+              .service { grid-column: auto; }
+              .stats { gap: 8px; }
+              section { padding: 12px; }
+            }
           </style>
         </head>
         <body>
-          <h1>recl 管理ダッシュボード</h1>
-          <p>開発用 MVP・読み取り専用（認証なし、プロダクション非対応）</p>
+          <header><h1>recl 管理ダッシュボード</h1><p>開発用 MVP・読み取り専用（認証なし、プロダクション非対応）</p></header>
           <nav><a href="/health">ヘルスチェック</a> · <a href="/dashboard/api/metrics">JSON メトリクス</a></nav>
-          <section>
+          <main class="dashboard">
+          <section class="service">
             <h2>サービスステータス</h2>
             <p id="status" role="status">取得中…</p>
-            <dl>
-              <dt>稼働時間（サーバーインスタンス作成から）</dt><dd id="uptime">—</dd>
-              <dt>HTTP リクエスト数</dt><dd id="requests">—</dd>
-            </dl>
-            <p>リクエスト数は全パス・全メソッドを含み、この画面からのメトリクス取得も加算します。</p>
+            <div class="stats">
+              <div class="stat"><span class="stat-label">稼働時間</span><strong class="stat-value" id="uptime">—</strong></div>
+              <div class="stat"><span class="stat-label">HTTP リクエスト数</span><strong class="stat-value" id="requests">—</strong></div>
+            </div>
+            <p class="note">リクエスト数は全パス・全メソッドを含み、この画面からの取得も加算します。</p>
           </section>
           <section><h2>システム情報</h2><dl id="system"></dl></section>
           <section>
             <h2>モジュール状態</h2>
-            <p>起動構成の表示です。外部サービスのヘルスチェックは実行しません。</p>
+            <p class="note">起動構成の表示です（外部サービスのヘルスチェックなし）。</p>
             <dl id="modules"></dl>
           </section>
+          </main>
           <button id="refresh" type="button">更新</button>
           <script>
             function renderDetails(id, values) {
