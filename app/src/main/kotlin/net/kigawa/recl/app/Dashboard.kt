@@ -3,6 +3,9 @@ package net.kigawa.recl.app
 import com.sun.net.httpserver.HttpExchange
 import net.kigawa.recl.core.ContextStorage
 import net.kigawa.recl.core.EnumerationResult
+import net.kigawa.recl.core.ContextAggregate
+import net.kigawa.recl.core.ReadResult
+import java.net.URLDecoder
 import java.util.concurrent.atomic.AtomicLong
 
 /** Read-only MVP dashboard. Module states describe launcher wiring, not dependency health checks. */
@@ -18,11 +21,46 @@ internal class Dashboard(
         requestCount.incrementAndGet()
     }
 
-    fun page(exchange: HttpExchange) = handle(exchange, "/dashboard", "text/html", ::html)
+    fun page(exchange: HttpExchange) = handle(exchange, "/dashboard", "text/html") { Response(html()) }
 
-    fun metrics(exchange: HttpExchange) = handle(exchange, "/dashboard/api/metrics", "application/json", ::json)
+    fun metrics(exchange: HttpExchange) = handle(exchange, "/dashboard/api/metrics", "application/json") { Response(json()) }
 
-    private fun handle(exchange: HttpExchange, path: String, contentType: String, body: () -> String) {
+    fun contexts(exchange: HttpExchange) = handle(exchange, "/dashboard/contexts", "application/json") {
+        val query = exchange.requestURI.rawQuery.orEmpty().split('&').associate { part ->
+            val pair = part.split('=', limit = 2)
+            URLDecoder.decode(pair[0], Charsets.UTF_8) to
+                URLDecoder.decode(pair.getOrElse(1) { "" }, Charsets.UTF_8)
+        }
+        val search = query["search"].orEmpty()
+        val status = query["status"].orEmpty()
+        val contexts = when (val result = storage?.enumerateTenant("default", 10_000)) {
+            is EnumerationResult.Complete -> result.contexts.map { it.value }
+            null, EnumerationResult.Unsupported -> emptyList()
+            EnumerationResult.Unavailable -> return@handle Response("{\"error\":\"storage_unavailable\"}", 503)
+            EnumerationResult.TooLarge -> return@handle Response("{\"error\":\"too_many_contexts\"}", 503)
+        }
+        Response(contexts.filter { context ->
+            (status.isEmpty() || context.status.name == status) &&
+                (search.isEmpty() || listOf(context.id, context.title, context.summary, context.content, context.ownerId)
+                    .any { it.contains(search, ignoreCase = true) })
+        }.joinToString(prefix = "[", postfix = "]") { contextJson(it) })
+    }
+
+    fun contextDetail(exchange: HttpExchange) {
+        val path = exchange.requestURI.path
+        handle(exchange, if (path.startsWith("/dashboard/contexts/")) path else "/dashboard/contexts/", "text/html") {
+            val contextId = path.removePrefix("/dashboard/contexts/")
+            when (val result = storage?.get("default", contextId)) {
+                is ReadResult.Found -> Response(detailHtml(result.stored.value))
+                ReadResult.Unavailable -> Response(detailPage("取得失敗", "<p>ストレージを利用できません。</p>"), 503)
+                else -> Response(detailPage("Context が見つかりません", "<p>指定された Context は存在しません。</p>"), 404)
+            }
+        }
+    }
+
+    private data class Response(val body: String, val status: Int = 200)
+
+    private fun handle(exchange: HttpExchange, path: String, contentType: String, body: () -> Response) {
         exchange.use {
             val status: Int
             val response: String
@@ -37,8 +75,9 @@ internal class Dashboard(
                 type = "application/json"
                 exchange.responseHeaders.set("Allow", "GET, HEAD")
             } else {
-                status = 200
-                response = body()
+                val result = body()
+                status = result.status
+                response = result.body
                 type = contentType
             }
             val bytes = response.toByteArray(Charsets.UTF_8)
@@ -48,6 +87,37 @@ internal class Dashboard(
             exchange.sendResponseHeaders(status, if (head) -1 else bytes.size.toLong())
             if (!head) exchange.responseBody.use { it.write(bytes) }
         }
+    }
+
+    private fun contextJson(context: ContextAggregate): String = with(context) {
+        """{"id":${quote(id)},"kind":${quote(kind.name)},"status":${quote(status.name)},"title":${quote(title)},"summary":${quote(summary)},"ownerId":${quote(ownerId)},"sensitivity":${quote(sensitivity.name)},"validFromEpochMillis":$validFromEpochMillis,"validUntilEpochMillis":$validUntilEpochMillis,"contentRevision":$contentRevision,"pinned":$pinned}"""
+    }
+
+    private fun escapeHtml(value: String): String = value.replace("&", "&amp;")
+        .replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
+
+    private fun detailPage(title: String, body: String): String = """
+        <!doctype html>
+        <html lang="ja">
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>${escapeHtml(title)} - recl</title>
+        <style>body { font-family: system-ui, sans-serif; max-width: 1040px; margin: auto; padding: 20px; }
+        dd { margin-bottom: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }</style></head>
+        <body><nav><a href="/dashboard">ダッシュボードに戻る</a></nav>
+        <h1>${escapeHtml(title)}</h1>$body</body></html>
+    """.trimIndent()
+
+    private fun detailHtml(context: ContextAggregate): String = with(context) {
+        val fields = listOf(
+            "ID" to id, "種別" to kind.name, "ステータス" to status.name, "所有者" to ownerId,
+            "サマリー" to summary, "内容" to content, "スコープ" to scopes.joinToString(", "),
+            "機密度" to sensitivity.name, "有効開始日時 (Unix ミリ秒)" to (validFromEpochMillis?.toString() ?: "指定なし"),
+            "有効終了日時 (Unix ミリ秒)" to (validUntilEpochMillis?.toString() ?: "指定なし"),
+            "リビジョン" to contentRevision.toString(), "固定" to pinned.toString(),
+        )
+        detailPage(title, fields.joinToString(prefix = "<dl>", postfix = "</dl>", separator = "") { (label, value) ->
+            "<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>"
+        })
     }
 
     private fun recordCount(): Int? = when (val result = storage?.enumerateTenant("default", 10_000)) {
@@ -142,7 +212,19 @@ internal class Dashboard(
             <p class="note">リクエスト数は全パス・全メソッドを含み、この画面からの取得も加算します。</p>
           </section>
           <section><h2>システム情報</h2><dl id="system"></dl></section>
-          <section><h2>記録されたコンテキスト</h2><div class="stat"><span class="stat-label">レコード件数</span><strong class="stat-value" id="recordCount">—</strong></div></section>
+          <section class="service">
+            <h2>記録されたコンテキスト</h2>
+            <div class="stat"><span class="stat-label">レコード件数</span><strong class="stat-value" id="recordCount">—</strong></div>
+            <form id="contextFilters">
+              <label>検索 <input name="search" type="search"></label>
+              <label>ステータス <select name="status">
+                <option value="">すべて</option><option>PROPOSED</option><option>CONFIRMED</option><option>ARCHIVED</option>
+              </select></label>
+              <button type="submit">絞り込み</button>
+            </form>
+            <p id="contextStatus" role="status"></p>
+            <ul id="contexts"></ul>
+          </section>
           <section>
             <h2>モジュール状態</h2>
             <p class="note">起動構成の表示です（外部サービスのヘルスチェックなし）。</p>
@@ -151,6 +233,33 @@ internal class Dashboard(
           </main>
           <button id="refresh" type="button">更新</button>
           <script>
+            async function refreshContexts() {
+              const list = document.getElementById('contexts');
+              const status = document.getElementById('contextStatus');
+              status.textContent = '取得中…';
+              list.replaceChildren();
+              try {
+                const query = new URLSearchParams(new FormData(document.getElementById('contextFilters')));
+                const response = await fetch('/dashboard/contexts?' + query, { cache: 'no-store' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const contexts = await response.json();
+                for (const context of contexts) {
+                  const item = document.createElement('li');
+                  const link = document.createElement('a');
+                  link.href = '/dashboard/contexts/' + encodeURIComponent(context.id);
+                  link.textContent = context.title || context.id;
+                  item.append(link, ' (' + context.kind + ' / ' + context.status + ') ' + context.summary);
+                  list.append(item);
+                }
+                status.textContent = contexts.length ? contexts.length + ' 件を表示' : '該当する Context はありません。';
+              } catch (error) {
+                status.textContent = '一覧取得失敗: ' + error.message;
+              }
+            }
+            document.getElementById('contextFilters').addEventListener('submit', event => {
+              event.preventDefault();
+              refreshContexts();
+            });
             function renderDetails(id, values) {
               const list = document.getElementById(id);
               list.replaceChildren();
@@ -180,6 +289,7 @@ internal class Dashboard(
               } finally {
                 button.disabled = false;
               }
+              await refreshContexts();
             }
             document.getElementById('refresh').addEventListener('click', refresh);
             refresh();

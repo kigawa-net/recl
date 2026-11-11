@@ -30,6 +30,8 @@ class ReclHttpServer(
                     server.createContext("/health", ::health),
                     server.createContext("/dashboard", dashboard::page),
                     server.createContext("/dashboard/api/metrics", dashboard::metrics),
+                    server.createContext("/dashboard/contexts", dashboard::contexts),
+                    server.createContext("/dashboard/contexts/", dashboard::contextDetail),
                     server.createContext("/") { exchange ->
                         if (exchange.requestURI.path == "/") {
                             respondRedirect(exchange, 302, "/dashboard")
