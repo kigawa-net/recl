@@ -3,6 +3,7 @@ package net.kigawa.recl.app
 import com.sun.net.httpserver.HttpHandler
 import net.kigawa.recl.core.ContextReader
 import net.kigawa.recl.core.ContextService
+import net.kigawa.recl.core.ContextStorage
 import net.kigawa.recl.core.ContextTokenCounter
 import net.kigawa.recl.core.PinnedContextReader
 import net.kigawa.recl.core.Principal
@@ -17,6 +18,7 @@ sealed interface McpRuntime {
     data class Rejected(val reason: String) : McpRuntime
     data class Enabled(
         val handler: HttpHandler,
+        val storage: ContextStorage,
         val storageMode: String,
         val authMode: String,
         val publicUrl: String? = null,
@@ -78,7 +80,7 @@ sealed interface McpRuntime {
                 McpContextServer(McpContextTools(service, reader, pinnedReader, sessionAuthenticator, credential))
             }
             val metadataUrl = publicUrl?.let { "$it/.well-known/oauth-protected-resource" }
-            return Enabled(McpHttpHandler(factory, authenticator, metadataUrl), "in-memory (ephemeral)", mode, publicUrl, issuer, scope)
+            return Enabled(McpHttpHandler(factory, authenticator, metadataUrl), storage, "in-memory (ephemeral)", mode, publicUrl, issuer, scope)
         }
 
         private fun validId(value: String?): Boolean =
