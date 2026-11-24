@@ -13,6 +13,7 @@ internal class Dashboard(
     private val mcpEnabled: Boolean = false,
     private val mcpStorageMode: String? = null,
     private val storage: ContextStorage? = null,
+    private val tenantId: String = "default",
 ) {
     private val createdAt = System.nanoTime()
     private val requestCount = AtomicLong()
@@ -33,7 +34,7 @@ internal class Dashboard(
         }
         val search = query["search"].orEmpty()
         val status = query["status"].orEmpty()
-        val contexts = when (val result = storage?.enumerateTenant("default", 10_000)) {
+        val contexts = when (val result = storage?.enumerateTenant(tenantId, 10_000)) {
             is EnumerationResult.Complete -> result.contexts.map { it.value }
             null, EnumerationResult.Unsupported -> emptyList()
             EnumerationResult.Unavailable -> return@handle Response("{\"error\":\"storage_unavailable\"}", 503)
@@ -50,7 +51,7 @@ internal class Dashboard(
         val path = exchange.requestURI.path
         handle(exchange, if (path.startsWith("/dashboard/contexts/")) path else "/dashboard/contexts/", "text/html") {
             val contextId = path.removePrefix("/dashboard/contexts/")
-            when (val result = storage?.get("default", contextId)) {
+            when (val result = storage?.get(tenantId, contextId)) {
                 is ReadResult.Found -> Response(detailHtml(result.stored.value))
                 ReadResult.Unavailable -> Response(detailPage("取得失敗", "<p>ストレージを利用できません。</p>"), 503)
                 else -> Response(detailPage("Context が見つかりません", "<p>指定された Context は存在しません。</p>"), 404)
@@ -120,7 +121,7 @@ internal class Dashboard(
         })
     }
 
-    private fun recordCount(): Int? = when (val result = storage?.enumerateTenant("default", 10_000)) {
+    private fun recordCount(): Int? = when (val result = storage?.enumerateTenant(tenantId, 10_000)) {
         is EnumerationResult.Complete -> result.contexts.size
         else -> null
     }

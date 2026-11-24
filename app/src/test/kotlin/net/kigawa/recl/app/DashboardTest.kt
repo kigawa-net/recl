@@ -12,12 +12,14 @@ import net.kigawa.recl.core.ContextStorage
 import net.kigawa.recl.core.EnumerationResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.kigawa.recl.storage.memory.InMemoryContextStorage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DashboardTest {
@@ -31,6 +33,40 @@ class DashboardTest {
             assertEquals("no-store", response.cacheControl)
             assertEquals("[]", response.body)
             assertEquals(404, request(server, "/dashboard/contexts/missing").status)
+        }
+    }
+
+    @Test
+    fun `dashboard uses the configured MCP tenant for contexts and metrics`() {
+        val runtime = assertIs<McpRuntime.Enabled>(
+            McpRuntime.resolve(mcpEnvironment() + ("RECL_MCP_TENANT_ID" to "kigawa-net")),
+        )
+        assertEquals("kigawa-net", runtime.tenantId)
+        val configuredContext = context().copy(tenantId = "kigawa-net")
+        val defaultContext = context()
+        listOf(configuredContext, defaultContext, context()).forEach {
+            assertIs<WriteResult.Applied>(runtime.storage.createIfAbsent(it))
+        }
+        ReclHttpServer(
+            host = "127.0.0.1",
+            port = 0,
+            mcp = runtime.handler,
+            mcpStorageMode = runtime.storageMode,
+            storage = runtime.storage,
+            tenantId = runtime.tenantId,
+        ).use { server ->
+            server.start()
+            val list = request(server, "/dashboard/contexts")
+            assertEquals(200, list.status)
+            val items = Json.parseToJsonElement(list.body).jsonArray
+            assertEquals(1, items.size)
+            assertEquals(configuredContext.id, items.single().jsonObject.getValue("id").jsonPrimitive.content)
+            assertEquals(200, request(server, "/dashboard/contexts/${configuredContext.id}").status)
+            assertEquals(404, request(server, "/dashboard/contexts/${defaultContext.id}").status)
+
+            val metrics = request(server, "/dashboard/api/metrics")
+            assertEquals(200, metrics.status)
+            assertEquals(1, Json.parseToJsonElement(metrics.body).jsonObject.getValue("recordCount").jsonPrimitive.int)
         }
     }
 
@@ -181,20 +217,14 @@ class DashboardTest {
     }
 
     @Test
-    fun `metrics include context record count when storage is available`() {
+    fun `metrics count default tenant contexts when tenant ID is omitted`() {
         val storage = InMemoryContextStorage()
-        val context = ContextAggregate(
-            tenantId = "default", id = java.util.UUID.randomUUID().toString(), ownerId = "owner",
-            kind = ContextKind.DECISION, status = ContextStatus.CONFIRMED,
-            title = "Decision", summary = "Summary", content = "Content", sensitivity = Sensitivity.INTERNAL,
-        )
-        assertTrue(storage.createIfAbsent(context) is WriteResult.Applied)
-        val placeholder = HttpHandler { exchange -> exchange.sendResponseHeaders(204, -1); exchange.close() }
-        ReclHttpServer(host = "127.0.0.1", port = 0, mcp = placeholder, storage = storage).use { server ->
-            server.start()
+        assertIs<WriteResult.Applied>(storage.createIfAbsent(context()))
+        assertIs<WriteResult.Applied>(storage.createIfAbsent(context().copy(tenantId = "kigawa-net")))
+        withStorage(storage) { server ->
             val response = request(server, "/dashboard/api/metrics")
             assertEquals(200, response.status)
-            assertTrue(response.body.contains("\"recordCount\": 1"))
+            assertEquals(1, Json.parseToJsonElement(response.body).jsonObject.getValue("recordCount").jsonPrimitive.int)
         }
     }
 

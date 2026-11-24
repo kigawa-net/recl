@@ -21,6 +21,7 @@ sealed interface McpRuntime {
         val storage: ContextStorage,
         val storageMode: String,
         val authMode: String,
+        val tenantId: String,
         val publicUrl: String? = null,
         val issuer: String? = null,
         val requiredScope: String? = null,
@@ -34,7 +35,7 @@ sealed interface McpRuntime {
         fun resolve(env: Map<String, String>): McpRuntime {
             if (env["RECL_MCP_ENABLED"] != "1") return Disabled
             val tenantId = env["RECL_MCP_TENANT_ID"]
-            if (!validId(tenantId)) return Rejected("RECL_MCP_TENANT_ID must be non-blank without whitespace")
+            if (tenantId == null || !validId(tenantId)) return Rejected("RECL_MCP_TENANT_ID must be non-blank without whitespace")
             if (env["RECL_MCP_ALLOW_EPHEMERAL"] != "1") {
                 return Rejected("in-memory storage is ephemeral; set RECL_MCP_ALLOW_EPHEMERAL=1 to acknowledge")
             }
@@ -64,7 +65,7 @@ sealed interface McpRuntime {
                     if (scope != null && !validId(scope)) return Rejected("RECL_OIDC_REQUIRED_SCOPE must be a single non-blank scope")
                     val audience = env["RECL_OIDC_AUDIENCE"]
                     if (audience != null && !validId(audience)) return Rejected("RECL_OIDC_AUDIENCE must be non-blank without whitespace")
-                    authenticator = OidcTokenAuthenticator(issuer!!, jwksUri, tenantId!!, audience, scope)
+                    authenticator = OidcTokenAuthenticator(issuer!!, jwksUri, tenantId, audience, scope)
                 }
                 else -> return Rejected("RECL_MCP_AUTH must be token or oidc")
             }
@@ -74,13 +75,22 @@ sealed interface McpRuntime {
             val reader = ContextReader(storage)
             val pinnedReader = PinnedContextReader(storage, counter)
             val sessionAuthenticator = SessionAuthenticator { credential ->
-                authenticator.authenticate(credential)?.let { Principal(tenantId = tenantId!!, id = it.userId) }
+                authenticator.authenticate(credential)?.let { Principal(tenantId = tenantId, id = it.userId) }
             }
             val factory = { credential: String ->
                 McpContextServer(McpContextTools(service, reader, pinnedReader, sessionAuthenticator, credential))
             }
             val metadataUrl = publicUrl?.let { "$it/.well-known/oauth-protected-resource" }
-            return Enabled(McpHttpHandler(factory, authenticator, metadataUrl), storage, "in-memory (ephemeral)", mode, publicUrl, issuer, scope)
+            return Enabled(
+                handler = McpHttpHandler(factory, authenticator, metadataUrl),
+                storage = storage,
+                storageMode = "in-memory (ephemeral)",
+                authMode = mode,
+                tenantId = tenantId,
+                publicUrl = publicUrl,
+                issuer = issuer,
+                requiredScope = scope,
+            )
         }
 
         private fun validId(value: String?): Boolean =

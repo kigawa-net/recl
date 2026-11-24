@@ -16,9 +16,10 @@ class ReclHttpServer(
     mcpStorageMode: String? = null,
     metadata: HttpHandler? = null,
     storage: net.kigawa.recl.core.ContextStorage? = null,
+    tenantId: String? = null,
 ) : AutoCloseable {
     private val server = HttpServer.create(InetSocketAddress(host, port), 0)
-    private val dashboard = Dashboard(mcp != null, mcpStorageMode, storage)
+    private val dashboard = Dashboard(mcp != null, mcpStorageMode, storage, tenantId ?: "default")
 
     init {
         val requestCounter = Filter.beforeHandler("Count incoming HTTP requests") { dashboard.recordRequest() }
@@ -89,7 +90,14 @@ fun main() {
     val enabled = mcp as? McpRuntime.Enabled
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     require(port in 1..65535) { "PORT must be between 1 and 65535" }
-    val server = ReclHttpServer(port = port, mcp = enabled?.handler, mcpStorageMode = enabled?.storageMode, metadata = enabled?.metadataHandler, storage = enabled?.storage)
+    val server = ReclHttpServer(
+        port = port,
+        mcp = enabled?.handler,
+        mcpStorageMode = enabled?.storageMode,
+        metadata = enabled?.metadataHandler,
+        storage = enabled?.storage,
+        tenantId = enabled?.tenantId,
+    )
     Runtime.getRuntime().addShutdownHook(Thread { server.close() })
     server.start()
     println("recl MCP ${if (enabled != null) "enabled" else "disabled"}; auth: ${enabled?.authMode ?: "not_configured"}; storage: ${enabled?.storageMode ?: "not_configured"}")
