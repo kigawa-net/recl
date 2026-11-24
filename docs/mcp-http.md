@@ -21,6 +21,8 @@
 | `RECL_MCP_OWNER_ID` | Token mode only: non-blank owner ID without whitespace |
 | `RECL_MCP_ALLOW_EPHEMERAL` | `1` explicitly acknowledges storage loss on restart |
 
+When MCP is enabled, the dashboard lists, displays, and counts Context records from the same tenant set by `RECL_MCP_TENANT_ID`.
+
 OIDC mode also accepts:
 
 | Variable | Meaning |
