@@ -10,6 +10,7 @@ import net.kigawa.recl.core.Sensitivity
 import net.kigawa.recl.core.WriteResult
 import net.kigawa.recl.core.ContextStorage
 import net.kigawa.recl.core.EnumerationResult
+import net.kigawa.recl.core.ReadResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.int
@@ -33,6 +34,9 @@ class DashboardTest {
             assertEquals("no-store", response.cacheControl)
             assertEquals("[]", response.body)
             assertEquals(404, request(server, "/dashboard/contexts/missing").status)
+            val missing = request(server, "/dashboard/api/contexts/missing")
+            assertEquals(404, missing.status)
+            assertEquals("{\"error\":\"not_found\"}", missing.body)
         }
     }
 
@@ -63,6 +67,15 @@ class DashboardTest {
             assertEquals(configuredContext.id, items.single().jsonObject.getValue("id").jsonPrimitive.content)
             assertEquals(200, request(server, "/dashboard/contexts/${configuredContext.id}").status)
             assertEquals(404, request(server, "/dashboard/contexts/${defaultContext.id}").status)
+
+            val detail = request(server, "/dashboard/api/contexts/${configuredContext.id}")
+            assertEquals(200, detail.status)
+            val item = Json.parseToJsonElement(detail.body).jsonObject
+            assertEquals(configuredContext.id, item.getValue("id").jsonPrimitive.content)
+            assertTrue(item.getValue("scopes").jsonArray.isEmpty())
+            val missing = request(server, "/dashboard/api/contexts/${defaultContext.id}")
+            assertEquals(404, missing.status)
+            assertEquals("{\"error\":\"not_found\"}", missing.body)
 
             val metrics = request(server, "/dashboard/api/metrics")
             assertEquals(200, metrics.status)
@@ -158,6 +171,84 @@ class DashboardTest {
             assertEquals(200, head.status)
             assertEquals("", head.body)
             assertEquals(405, request(server, "/dashboard/contexts/${context.id}", "POST").status)
+        }
+    }
+
+    @Test
+    fun `JSON context detail adds content and scopes to the listing fields`() {
+        val storage = InMemoryContextStorage()
+        val context = context().copy(
+            content = "<b>日本語</b> \"quoted\"\nsecond line \\ backslash",
+            scopes = setOf("project:test", "repo:\"quoted\""),
+            validFromEpochMillis = 123,
+            pinned = true,
+        )
+        assertIs<WriteResult.Applied>(storage.createIfAbsent(context))
+        withStorage(storage) { server ->
+            val path = "/dashboard/api/contexts/${context.id}"
+            val response = request(server, path)
+            assertEquals(200, response.status)
+            assertEquals("application/json; charset=utf-8", response.contentType)
+            assertEquals("no-store", response.cacheControl)
+            val detail = Json.parseToJsonElement(response.body).jsonObject
+            val listed = Json.parseToJsonElement(request(server, "/dashboard/contexts").body).jsonArray.single().jsonObject
+            assertEquals(listed.toMap(), detail - setOf("content", "scopes"))
+            val content = detail.getValue("content").jsonPrimitive
+            val scopes = detail.getValue("scopes").jsonArray.map { it.jsonPrimitive }
+            assertEquals(context.content, content.content)
+            assertTrue(content.isString)
+            assertEquals(context.scopes.size, scopes.size)
+            assertEquals(context.scopes, scopes.map { it.content }.toSet())
+            assertTrue(scopes.all { it.isString })
+
+            val head = request(server, path, "HEAD")
+            assertEquals(200, head.status)
+            assertEquals(response.contentType, head.contentType)
+            assertEquals(response.cacheControl, head.cacheControl)
+            assertEquals("", head.body)
+        }
+    }
+
+    @Test
+    fun `JSON context detail returns 404 for missing contexts and rejects POST`() {
+        withStorage(InMemoryContextStorage()) { server ->
+            val path = "/dashboard/api/contexts/missing"
+            val missing = request(server, path)
+            assertEquals(404, missing.status)
+            assertEquals("application/json; charset=utf-8", missing.contentType)
+            assertEquals("no-store", missing.cacheControl)
+            assertEquals("{\"error\":\"not_found\"}", missing.body)
+
+            val post = request(server, path, "POST")
+            assertEquals(405, post.status)
+            assertEquals("GET, HEAD", post.allow)
+            assertEquals("{\"error\":\"method_not_allowed\"}", post.body)
+        }
+    }
+
+    @Test
+    fun `JSON context detail returns 404 when storage does not support reads`() {
+        val storage = object : ContextStorage by InMemoryContextStorage() {
+            override fun get(tenantId: String, id: String): ReadResult = throw UnsupportedOperationException()
+        }
+        withStorage(storage) { server ->
+            val response = request(server, "/dashboard/api/contexts/missing")
+            assertEquals(404, response.status)
+            assertEquals("{\"error\":\"not_found\"}", response.body)
+        }
+    }
+
+    @Test
+    fun `JSON context detail returns 503 when storage is unavailable`() {
+        val storage = object : ContextStorage by InMemoryContextStorage() {
+            override fun get(tenantId: String, id: String) = ReadResult.Unavailable
+        }
+        withStorage(storage) { server ->
+            val response = request(server, "/dashboard/api/contexts/missing")
+            assertEquals(503, response.status)
+            assertEquals("application/json; charset=utf-8", response.contentType)
+            assertEquals("no-store", response.cacheControl)
+            assertEquals("{\"error\":\"storage_unavailable\"}", response.body)
         }
     }
 
