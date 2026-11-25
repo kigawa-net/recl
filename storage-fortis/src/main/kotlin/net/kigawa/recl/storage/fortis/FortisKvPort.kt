@@ -2,9 +2,8 @@ package net.kigawa.recl.storage.fortis
 
 /**
  * recl-side view of the Fortis single-group KV surface. It mirrors the fortis contracts
- * (`docs/conditional-batch-contract.md`, `docs/revision-scan-contract.md` on fortis
- * origin/feature/raft) but is NOT a binding to them: no fortis code is linked in yet.
- * See docs/fortis-adapter.md.
+ * (`docs/conditional-batch-contract.md` and `docs/revision-scan-contract.md` in Fortis).
+ * The optional storage-fortis-inproc module provides the JVM binding. See docs/fortis-adapter.md.
  *
  * Revisions are Fortis per-key revisions, i.e. the Raft log index of the last write to that key.
  * Implementations must never synthesize a conditional write from a read followed by a plain put.

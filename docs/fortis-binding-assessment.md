@@ -1,9 +1,10 @@
 # Fortis real-binding assessment (recl #69)
 
-Status: **assessment only.** Verdict: production remote binding is **BLOCKED**; an in-process PoC is
-**PARTIALLY possible**. No code in this document is implemented.
+Status (2026-11-25): The [in-process storage path](fortis-inproc.md) is implemented. Production remote
+binding remains **BLOCKED**.
 
-Verified 2026-11-05 against:
+The original assessment (2026-11-05) found production remote binding **BLOCKED** and an in-process
+PoC **PARTIALLY possible**. It was verified against:
 
 - recl `storage-fortis/src/main/kotlin/net/kigawa/recl/storage/fortis/FortisKvPort.kt`;
 - Fortis worktree `/home/kigawa/dev/kigawa-net/fortis-46-wt` (`7336ca6`, `feat/45-prefix-scan`);

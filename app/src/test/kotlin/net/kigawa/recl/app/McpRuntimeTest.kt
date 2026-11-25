@@ -43,6 +43,41 @@ class McpRuntimeTest {
     }
 
     @Test
+    fun `explicit memory requires the ephemeral acknowledgement`() {
+        val env = mcpEnvironment() + ("RECL_STORAGE" to "memory")
+        val rejected = assertIs<McpRuntime.Rejected>(McpRuntime.resolve(env - "RECL_MCP_ALLOW_EPHEMERAL"))
+        assertTrue(rejected.reason.contains("RECL_MCP_ALLOW_EPHEMERAL=1"))
+        assertIs<McpRuntime.Enabled>(McpRuntime.resolve(env)).use {
+            assertEquals("in-memory (ephemeral)", it.storageMode)
+        }
+    }
+
+    @Test
+    fun `fortis requires a non-blank directory`() {
+        val env = mcpEnvironment() - "RECL_MCP_ALLOW_EPHEMERAL" + ("RECL_STORAGE" to "fortis")
+        for (settings in listOf(env, env + ("RECL_FORTIS_DIR" to " "))) {
+            val rejected = assertIs<McpRuntime.Rejected>(McpRuntime.resolve(settings))
+            assertTrue(rejected.reason.contains("RECL_FORTIS_DIR"))
+        }
+    }
+
+    @Test
+    fun `unknown storage mode is rejected`() {
+        val rejected = assertIs<McpRuntime.Rejected>(
+            McpRuntime.resolve(mcpEnvironment() + ("RECL_STORAGE" to "unknown")),
+        )
+        assertEquals("RECL_STORAGE must be memory or fortis", rejected.reason)
+    }
+
+    @Test
+    fun `missing fortis provider explains how to build it`() {
+        val env = mcpEnvironment() - "RECL_MCP_ALLOW_EPHEMERAL" +
+            mapOf("RECL_STORAGE" to "fortis", "RECL_FORTIS_DIR" to "unused")
+        val rejected = assertIs<McpRuntime.Rejected>(McpRuntime.resolve(env) { null })
+        assertEquals("this build does not include Fortis storage; rebuild with -Pfortis.dir=<path>", rejected.reason)
+    }
+
+    @Test
     fun `invalid credentials are rejected without exposing their values`() {
         for ((key, value) in listOf(
             "RECL_MCP_TOKEN" to "short-secret",

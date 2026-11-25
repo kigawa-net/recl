@@ -17,9 +17,11 @@
 | `RECL_MCP_ENABLED` | `1` enables MCP; unset or any other value leaves it disabled |
 | `RECL_MCP_AUTH` | `token` (default) or `oidc` |
 | `RECL_MCP_TOKEN` | Token mode only: secret Bearer token, at least 32 characters without whitespace; use a random ASCII token |
-| `RECL_MCP_TENANT_ID` | Non-blank tenant ID without whitespace |
+| `RECL_MCP_TENANT_ID` | Non-blank tenant ID without whitespace. Fortis requires a canonical lowercase tenant ID. |
 | `RECL_MCP_OWNER_ID` | Token mode only: non-blank owner ID without whitespace |
-| `RECL_MCP_ALLOW_EPHEMERAL` | `1` explicitly acknowledges storage loss on restart |
+| `RECL_STORAGE` | `memory` (default) or `fortis` |
+| `RECL_FORTIS_DIR` | Required writable data directory when `RECL_STORAGE=fortis` |
+| `RECL_MCP_ALLOW_EPHEMERAL` | Required as `1` in memory mode to acknowledge storage loss on restart |
 
 When MCP is enabled, the dashboard lists, displays, and counts Context records from the same tenant set by `RECL_MCP_TENANT_ID`.
 
@@ -176,10 +178,10 @@ For local static token mode, set `RECL_MCP_TOKEN` in the OpenCode environment an
 
 ## Production status and limitations
 
-This is an explicitly gated temporary HTTP integration, not durable production memory. In-memory Context and request deduplication records disappear on restart and are not shared between replicas. `search_context` is disabled; use exact UUIDv7 IDs with `get_context` or `get_pinned_contexts` instead. The pinned-context budget counts `title.length + summary.length + content.length`; this character heuristic is not a model tokenizer.
+In memory mode, Contexts and request deduplication records disappear on restart. The optional [embedded Fortis mode](fortis-inproc.md) preserves them on one node with a persistent volume. `search_context` is disabled; use exact UUIDv7 IDs with `get_context` or `get_pinned_contexts` instead. The pinned-context budget counts `title.length + summary.length + content.length`; this character heuristic is not a model tokenizer.
 
 Fortis remote storage bindings are not implemented. OIDC JWT verification is implemented, but live Keycloak/OpenCode interoperability, realm audience/scope mappings and production authorization policy still need deployment validation. Token mode uses a single fixed server-side Principal (tenant and owner from the environment) for all calls authenticated with the shared token. Tenant and owner cannot be selected by request arguments. Use HTTPS for remote access and treat the token as granting that Principal's access to every enabled tool.
 
 Without `RECL_OIDC_AUDIENCE`, tokens issued for other clients in the same realm may also be accepted. For production, configure `RECL_OIDC_AUDIENCE` or a dedicated `RECL_OIDC_REQUIRED_SCOPE`; `openid` alone does not isolate recl access. JWT verification does not provide immediate revocation or token introspection.
 
-The default remains fail-closed. Removing the ephemeral acknowledgement gate for normal durable production operation requires implementing and wiring Fortis; setting `RECL_MCP_ALLOW_EPHEMERAL=1` only opts into temporary storage and does not provide persistence. The dashboard reports `modules.mcp` as `running` and `modules.mcpStorage` as `in-memory (ephemeral)` only when MCP is wired; both are `not_configured` otherwise. These are wiring states, not external service health checks.
+When MCP is enabled, the dashboard reports `modules.mcp` as `running` and `modules.mcpStorage` as `in-memory (ephemeral)` or `fortis (in-process, single-node, durable)`. When MCP is disabled, both fields report `not_configured`.

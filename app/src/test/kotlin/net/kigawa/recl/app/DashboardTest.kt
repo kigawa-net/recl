@@ -17,12 +17,42 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.kigawa.recl.storage.memory.InMemoryContextStorage
+import java.nio.file.Path
+import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DashboardTest {
+    @Test
+    fun `fortis selection follows the packaged provider and reports its mode`(@TempDir dir: Path) {
+        val env = mcpEnvironment() - "RECL_MCP_ALLOW_EPHEMERAL" +
+            mapOf("RECL_STORAGE" to "fortis", "RECL_FORTIS_DIR" to dir.toString())
+        val runtime = McpRuntime.resolve(env)
+        if (!java.lang.Boolean.getBoolean("recl.test.fortisIncluded")) {
+            assertTrue(assertIs<McpRuntime.Rejected>(runtime).reason.contains("-Pfortis.dir"))
+            return
+        }
+        assertIs<McpRuntime.Enabled>(runtime).use { enabled ->
+            ReclHttpServer(
+                host = "127.0.0.1",
+                port = 0,
+                mcp = enabled.handler,
+                mcpStorageMode = enabled.storageMode,
+                storage = enabled.storage,
+                tenantId = enabled.tenantId,
+            ).use { server ->
+                server.start()
+                val response = request(server, "/dashboard/api/metrics")
+                assertEquals(200, response.status)
+                val modules = Json.parseToJsonElement(response.body).jsonObject.getValue("modules").jsonObject
+                assertEquals("fortis (in-process, single-node, durable)", modules.getValue("mcpStorage").jsonPrimitive.content)
+            }
+        }
+        assertIs<McpRuntime.Enabled>(McpRuntime.resolve(env)).use { }
+    }
+
     @Test
     fun `contexts without MCP returns an empty JSON array`() {
         ReclHttpServer(host = "127.0.0.1", port = 0).use { server ->

@@ -8,7 +8,7 @@ import java.net.InetSocketAddress
 import java.util.concurrent.Executors
 import kotlin.system.exitProcess
 
-/** HTTP process with an explicitly gated, ephemeral MCP runtime. */
+/** HTTP process with an explicitly gated MCP runtime. */
 class ReclHttpServer(
     private val host: String = "0.0.0.0",
     private val port: Int = 8080,
@@ -89,17 +89,25 @@ fun main() {
     }
     val enabled = mcp as? McpRuntime.Enabled
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
-    require(port in 1..65535) { "PORT must be between 1 and 65535" }
-    val server = ReclHttpServer(
-        port = port,
-        mcp = enabled?.handler,
-        mcpStorageMode = enabled?.storageMode,
-        metadata = enabled?.metadataHandler,
-        storage = enabled?.storage,
-        tenantId = enabled?.tenantId,
-    )
-    Runtime.getRuntime().addShutdownHook(Thread { server.close() })
-    server.start()
+    val server = try {
+        require(port in 1..65535) { "PORT must be between 1 and 65535" }
+        ReclHttpServer(
+            port = port,
+            mcp = enabled?.handler,
+            mcpStorageMode = enabled?.storageMode,
+            metadata = enabled?.metadataHandler,
+            storage = enabled?.storage,
+            tenantId = enabled?.tenantId,
+        ).also { server ->
+            Runtime.getRuntime().addShutdownHook(Thread {
+                enabled.use { server.close() }
+            })
+            server.start()
+        }
+    } catch (failure: Throwable) {
+        runCatching { enabled?.close() }.onFailure(failure::addSuppressed)
+        throw failure
+    }
     println("recl MCP ${if (enabled != null) "enabled" else "disabled"}; auth: ${enabled?.authMode ?: "not_configured"}; storage: ${enabled?.storageMode ?: "not_configured"}")
     println("recl HTTP server listening on ${server.address()}")
 }
