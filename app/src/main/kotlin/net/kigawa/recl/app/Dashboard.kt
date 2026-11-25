@@ -26,6 +26,27 @@ internal class Dashboard(
 
     fun metrics(exchange: HttpExchange) = handle(exchange, "/dashboard/api/metrics", "application/json") { Response(json()) }
 
+    fun contextDetailJson(exchange: HttpExchange) {
+        val prefix = "/dashboard/api/contexts/"
+        val path = exchange.requestURI.path
+        handle(exchange, if (path.startsWith(prefix)) path else prefix, "application/json") {
+            val contextId = path.removePrefix(prefix)
+            if (contextId.isEmpty() || '/' in contextId) {
+                return@handle Response("{\"error\":\"not_found\"}", 404)
+            }
+            val result = try {
+                storage?.get(tenantId, contextId)
+            } catch (_: UnsupportedOperationException) {
+                ReadResult.NotFound
+            }
+            when (result) {
+                is ReadResult.Found -> Response(contextJson(result.stored.value, includeDetail = true))
+                ReadResult.Unavailable -> Response("{\"error\":\"storage_unavailable\"}", 503)
+                ReadResult.NotFound, null -> Response("{\"error\":\"not_found\"}", 404)
+            }
+        }
+    }
+
     fun contexts(exchange: HttpExchange) = handle(exchange, "/dashboard/contexts", "application/json") {
         val query = exchange.requestURI.rawQuery.orEmpty().split('&').associate { part ->
             val pair = part.split('=', limit = 2)
@@ -90,8 +111,14 @@ internal class Dashboard(
         }
     }
 
-    private fun contextJson(context: ContextAggregate): String = with(context) {
-        """{"id":${quote(id)},"kind":${quote(kind.name)},"status":${quote(status.name)},"title":${quote(title)},"summary":${quote(summary)},"ownerId":${quote(ownerId)},"sensitivity":${quote(sensitivity.name)},"validFromEpochMillis":$validFromEpochMillis,"validUntilEpochMillis":$validUntilEpochMillis,"contentRevision":$contentRevision,"pinned":$pinned}"""
+    private fun contextJson(context: ContextAggregate, includeDetail: Boolean = false): String = with(context) {
+        val detail = if (includeDetail) {
+            val scopesJson = scopes.joinToString(prefix = "[", postfix = "]", transform = ::quote)
+            ""","content":${quote(content)},"scopes":$scopesJson"""
+        } else {
+            ""
+        }
+        """{"id":${quote(id)},"kind":${quote(kind.name)},"status":${quote(status.name)},"title":${quote(title)},"summary":${quote(summary)},"ownerId":${quote(ownerId)},"sensitivity":${quote(sensitivity.name)},"validFromEpochMillis":$validFromEpochMillis,"validUntilEpochMillis":$validUntilEpochMillis,"contentRevision":$contentRevision,"pinned":$pinned$detail}"""
     }
 
     private fun escapeHtml(value: String): String = value.replace("&", "&amp;")
